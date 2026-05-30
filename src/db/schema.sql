@@ -109,22 +109,55 @@ CREATE TABLE IF NOT EXISTS rewards (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Redemptions. Points are spent immediately at 'pending'. Cancel writes a reversal.
+-- Redemptions. Points are reserved (spent) immediately at 'pending'; the reward
+-- is captured later when a merchant scans the user's redemption QR ("authorize
+-- now, capture later"). A cancel/expiry writes a compensating reversal and
+-- restores stock. Two independent lifetimes:
+--   expires_at             — the reservation lifetime (default 15 min).
+--   claim_token_expires_at — the redemption-QR token lifetime (default 5 min);
+--                            the QR can be re-minted while the redemption lives.
 CREATE TABLE IF NOT EXISTS redemptions (
-  id              BIGSERIAL PRIMARY KEY,
-  user_id         BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  reward_id       BIGINT NOT NULL REFERENCES rewards(id) ON DELETE RESTRICT,
-  cost            INTEGER NOT NULL,
-  status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','fulfilled','cancelled')),
-  merchant_id     BIGINT REFERENCES merchants(id) ON DELETE SET NULL,
-  actor_user_id   BIGINT REFERENCES users(id) ON DELETE SET NULL,
-  spend_txn_id    BIGINT REFERENCES transactions(id) ON DELETE SET NULL,
-  reversal_txn_id BIGINT REFERENCES transactions(id) ON DELETE SET NULL,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  id                       BIGSERIAL PRIMARY KEY,
+  user_id                  BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reward_id                BIGINT NOT NULL REFERENCES rewards(id) ON DELETE RESTRICT,
+  cost                     INTEGER NOT NULL,
+  status                   TEXT NOT NULL DEFAULT 'pending'
+                             CHECK (status IN ('pending','fulfilled','cancelled_by_user','cancelled_by_staff','expired')),
+  merchant_id              BIGINT REFERENCES merchants(id) ON DELETE SET NULL,
+  actor_user_id            BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  spend_txn_id             BIGINT REFERENCES transactions(id) ON DELETE SET NULL,
+  reversal_txn_id          BIGINT REFERENCES transactions(id) ON DELETE SET NULL,
+  -- Redemption QR: only the SHA-256 hash of the claim token is ever stored.
+  claim_token_hash         BYTEA,
+  claim_token_expires_at   TIMESTAMPTZ,
+  -- Reservation lifetime; once past, the sweeper reverses the hold.
+  expires_at               TIMESTAMPTZ,
+  -- Set when a merchant scan captures (fulfills) the redemption.
+  fulfilled_by_merchant_id BIGINT REFERENCES merchants(id) ON DELETE SET NULL,
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_redemptions_user ON redemptions(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_redemptions_status ON redemptions(status);
+
+-- Idempotent migration of the live DB to the redemption-QR / lifecycle model.
+-- (CREATE TABLE above covers fresh installs; these ALTERs cover existing tables.)
+ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS claim_token_hash BYTEA;
+ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS claim_token_expires_at TIMESTAMPTZ;
+ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS fulfilled_by_merchant_id BIGINT REFERENCES merchants(id) ON DELETE SET NULL;
+-- At most one live redemption per claim token; lets us match + burn on scan.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_redemptions_claim_token
+  ON redemptions(claim_token_hash) WHERE claim_token_hash IS NOT NULL;
+-- Drives the expiry sweeper.
+CREATE INDEX IF NOT EXISTS idx_redemptions_expiry
+  ON redemptions(expires_at) WHERE status = 'pending';
+-- Migrate the old single 'cancelled' status to the staff-cancel bucket BEFORE
+-- swapping the CHECK constraint to the new lifecycle set.
+UPDATE redemptions SET status = 'cancelled_by_staff' WHERE status = 'cancelled';
+ALTER TABLE redemptions DROP CONSTRAINT IF EXISTS redemptions_status_check;
+ALTER TABLE redemptions ADD CONSTRAINT redemptions_status_check
+  CHECK (status IN ('pending','fulfilled','cancelled_by_user','cancelled_by_staff','expired'));
 
 -- Audit trail for staff / super-admin actions.
 CREATE TABLE IF NOT EXISTS audit_log (
