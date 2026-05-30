@@ -5,8 +5,17 @@ import { config } from '../config.js';
 // balances/ids fit in JS safe integers, so parse them as numbers for ergonomics.
 pg.types.setTypeParser(20, (v) => (v === null ? null : Number.parseInt(v, 10)));
 
+// The platform's CNPG Postgres requires SSL (pg_hba rejects unencrypted
+// connections). node-pg connects without SSL by default, so enable it. The
+// cluster uses an internal CA, so we encrypt without CA verification — standard
+// for in-cluster CNPG. Default on in production; override with DATABASE_SSL.
+const useSsl = process.env.DATABASE_SSL
+  ? process.env.DATABASE_SSL === 'true'
+  : config.appEnv === 'production';
+
 export const pool = new pg.Pool({
   connectionString: config.databaseUrl || undefined,
+  ssl: useSsl ? { rejectUnauthorized: false } : false,
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
