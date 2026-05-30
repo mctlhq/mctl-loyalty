@@ -51,7 +51,7 @@ app.use('/api', api);
 // ---- static SPA ----
 // One Vite build lives in /public; client-side routing handles /app and /admin.
 app.use(express.static(PUBLIC_DIR, { index: false }));
-app.get(['/', '/app', '/app/*', '/admin', '/admin/*'], (_req, res) => {
+app.get(['/', '/app', '/app/*', '/admin', '/admin/*', '/help', '/help/*', '/docs', '/docs/*'], (_req, res) => {
   res.sendFile(resolve(PUBLIC_DIR, 'index.html'));
 });
 

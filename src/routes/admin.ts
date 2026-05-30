@@ -1,24 +1,12 @@
 import { Router } from 'express';
 import { pool } from '../db/pool.js';
 import { getCtx, requireSuperAdmin } from '../middleware/auth.js';
-import { audit } from '../services/ledger.js';
+import { audit, LedgerError } from '../services/ledger.js';
+import { addMember } from '../services/members.js';
 
 export const adminRouter = Router();
 
 adminRouter.use(requireSuperAdmin());
-
-// Ensure a user row exists for a Telegram id (so staff can be added pre-signup).
-async function ensureUser(telegramId: number): Promise<number> {
-  const { rows } = await pool.query<{ id: number }>(
-    `INSERT INTO users (telegram_id) VALUES ($1)
-     ON CONFLICT (telegram_id) DO UPDATE SET telegram_id = EXCLUDED.telegram_id
-     RETURNING id`,
-    [telegramId],
-  );
-  const userId = rows[0]!.id;
-  await pool.query(`INSERT INTO wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, [userId]);
-  return userId;
-}
 
 adminRouter.get('/merchants', async (_req, res, next) => {
   try {
@@ -67,21 +55,14 @@ adminRouter.post('/merchants/:mid/members', async (req, res, next) => {
       res.status(400).json({ error: 'invalid role' });
       return;
     }
-    const merchant = await pool.query(`SELECT 1 FROM merchants WHERE id = $1`, [mid]);
-    if (merchant.rowCount === 0) {
-      res.status(404).json({ error: 'merchant not found' });
-      return;
-    }
-    const userId = await ensureUser(telegramId);
-    await pool.query(
-      `INSERT INTO merchant_members (merchant_id, user_id, role)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (merchant_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
-      [mid, userId, role],
-    );
-    await audit(ctx.userId, 'member.upsert', { merchantId: mid, targetType: 'user', targetId: userId, meta: { telegram_id: telegramId, role } });
+    const member = await addMember(mid, telegramId, role as 'admin' | 'scanner');
+    await audit(ctx.userId, 'member.upsert', { merchantId: mid, targetType: 'user', targetId: member.user_id, meta: { telegram_id: telegramId, role } });
     res.json({ ok: true, merchant_id: mid, telegram_id: telegramId, role });
   } catch (err) {
+    if (err instanceof LedgerError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
     next(err);
   }
 });

@@ -34,16 +34,27 @@ export function alertMsg(msg: string): void {
 export function scanQr(): Promise<string | null> {
   return new Promise((resolveScan) => {
     if (tg?.showScanQrPopup) {
-      tg.showScanQrPopup({ text: 'Наведите на QR пользователя' }, (text: string) => {
+      tg.showScanQrPopup({ text: 'Point at the customer QR' }, (text: string) => {
         tg.closeScanQrPopup?.();
         resolveScan(text);
         return true;
       });
     } else {
-      const text = window.prompt('Вставьте QR-токен (нет нативного сканера):');
+      const text = window.prompt('Paste the QR token (no native scanner):');
       resolveScan(text);
     }
   });
+}
+
+/** Copy text to the clipboard, with a prompt fallback. Returns true on success. */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    window.prompt('Copy your ID:', text);
+    return false;
+  }
 }
 
 export function ready(): void {

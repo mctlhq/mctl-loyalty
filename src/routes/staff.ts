@@ -12,6 +12,7 @@ import {
   reverseTransaction,
   scanAndAccrue,
 } from '../services/ledger.js';
+import { addMember, listMembers, removeMember } from '../services/members.js';
 
 export const staffRouter = Router();
 
@@ -84,6 +85,58 @@ staffRouter.get('/merchants/:mid/rules', requireMember(['admin', 'scanner']), as
   }
 });
 
+// --- Staff management (merchant-admins; super-admin bypasses requireMember) ---
+
+staffRouter.get('/merchants/:mid/members', requireMember(['admin']), async (req, res, next) => {
+  try {
+    const members = await listMembers(Number.parseInt(req.params.mid!, 10));
+    res.json({ members });
+  } catch (err) {
+    next(err);
+  }
+});
+
+staffRouter.post('/merchants/:mid/members', requireMember(['admin']), async (req, res, next) => {
+  try {
+    const ctx = getCtx(req);
+    const mid = Number.parseInt(req.params.mid!, 10);
+    const telegramId = Number.parseInt(String(req.body?.telegram_id ?? ''), 10);
+    // Merchant-admins may only add scanners; super-admins may set any role.
+    let role = String(req.body?.role ?? 'scanner');
+    if (!ctx.superAdmin) role = 'scanner';
+    if (!Number.isFinite(telegramId)) {
+      res.status(400).json({ error: 'telegram_id required' });
+      return;
+    }
+    if (!['admin', 'scanner'].includes(role)) {
+      res.status(400).json({ error: 'invalid role' });
+      return;
+    }
+    const m = await addMember(mid, telegramId, role as 'admin' | 'scanner');
+    await audit(ctx.userId, 'member.upsert', { merchantId: mid, targetType: 'user', targetId: m.user_id, meta: { telegram_id: telegramId, role } });
+    res.json({ ok: true, ...m });
+  } catch (err) {
+    sendLedgerError(res, err, next);
+  }
+});
+
+staffRouter.delete('/merchants/:mid/members/:userId', requireMember(['admin']), async (req, res, next) => {
+  try {
+    const ctx = getCtx(req);
+    const mid = Number.parseInt(req.params.mid!, 10);
+    const userId = Number.parseInt(req.params.userId!, 10);
+    if (!Number.isFinite(userId)) {
+      res.status(400).json({ error: 'bad user id' });
+      return;
+    }
+    await removeMember(mid, userId, !ctx.superAdmin); // merchant-admin: scanners only
+    await audit(ctx.userId, 'member.remove', { merchantId: mid, targetType: 'user', targetId: userId });
+    res.json({ ok: true });
+  } catch (err) {
+    sendLedgerError(res, err, next);
+  }
+});
+
 // Scan a user's QR and apply an accrual rule.
 staffRouter.post('/merchants/:mid/scan', requireMember(['admin', 'scanner']), async (req, res, next) => {
   try {
@@ -106,7 +159,7 @@ staffRouter.post('/merchants/:mid/scan', requireMember(['admin', 'scanner']), as
       targetType: 'user',
       meta: { rule_id: ruleId, delta: result.delta },
     });
-    void notify(targetTelegramId, `+${result.delta} баллов (${result.ruleName}). Баланс: ${result.balance}`);
+    void notify(targetTelegramId, `+${result.delta} points (${result.ruleName}). Balance: ${result.balance}`);
     res.json(result);
   } catch (err) {
     sendLedgerError(res, err, next);

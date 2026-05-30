@@ -1,6 +1,6 @@
 import QRCode from 'qrcode';
 import { api } from './api.js';
-import { alertMsg } from './tg.js';
+import { alertMsg, copyText } from './tg.js';
 
 interface Me {
   telegram_id: number;
@@ -47,23 +47,32 @@ export async function renderUser(root: HTMLElement): Promise<void> {
   const me = await api.get<Me>('/me');
   root.innerHTML = `
     <div class="card">
-      <div class="balance"><span>${me.balance}</span><small>баллов</small></div>
-      <div class="muted">${me.username ? '@' + me.username : 'id ' + me.telegram_id}</div>
+      <div class="balance"><span>${me.balance}</span><small>points</small></div>
+      <div class="muted">${me.username ? '@' + esc(me.username) : 'Telegram user'}</div>
+      <div class="idline">ID: <code>${me.telegram_id}</code> <button class="ghost" id="copy-id">Copy</button></div>
     </div>
     <div class="card center">
       <canvas id="qr"></canvas>
-      <div class="muted">QR обновляется автоматически</div>
+      <div class="muted">Show this QR to staff. It refreshes automatically.</div>
     </div>
     <div class="card">
-      <h3>Награды</h3>
-      <div id="rewards">Загрузка…</div>
+      <h3>Rewards</h3>
+      <div id="rewards">Loading…</div>
     </div>
     <div class="card">
-      <h3>История</h3>
-      <div id="txns">Загрузка…</div>
+      <h3>History</h3>
+      <div id="txns">Loading…</div>
     </div>
-    ${me.super_admin ? '<a class="link" href="/admin">Панель администратора →</a>' : ''}
+    <div class="links">
+      ${me.super_admin ? '<a class="link" href="/admin">Admin panel →</a>' : ''}
+      <a class="link" href="/help">Help &amp; guide</a>
+    </div>
   `;
+
+  root.querySelector<HTMLButtonElement>('#copy-id')!.addEventListener('click', async () => {
+    const ok = await copyText(String(me.telegram_id));
+    if (ok) alertMsg('ID copied');
+  });
 
   const canvas = root.querySelector<HTMLCanvasElement>('#qr')!;
   await refreshQr(canvas);
@@ -81,7 +90,7 @@ export async function renderUser(root: HTMLElement): Promise<void> {
           </div>`,
         )
         .join('')
-    : '<div class="muted">Пока нет наград</div>';
+    : '<div class="muted">No rewards yet</div>';
   rewardsEl.querySelectorAll<HTMLButtonElement>('button[data-reward]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
@@ -89,7 +98,7 @@ export async function renderUser(root: HTMLElement): Promise<void> {
         const r = await api.post<{ balance: number; rewardTitle: string }>('/redeem', {
           reward_id: Number(btn.dataset.reward),
         });
-        alertMsg(`Списано! «${r.rewardTitle}». Баланс: ${r.balance}`);
+        alertMsg(`Redeemed "${r.rewardTitle}". Balance: ${r.balance}`);
         await renderUser(root);
       } catch (err) {
         alertMsg((err as Error).message);
@@ -109,12 +118,12 @@ export async function renderUser(root: HTMLElement): Promise<void> {
           </div>`,
         )
         .join('')
-    : '<div class="muted">Операций пока нет</div>';
+    : '<div class="muted">No operations yet</div>';
 }
 
 function esc(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 }
 function fmt(iso: string): string {
-  return new Date(iso).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
+  return new Date(iso).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
 }
