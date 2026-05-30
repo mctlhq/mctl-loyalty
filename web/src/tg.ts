@@ -7,7 +7,7 @@ interface TgWebApp {
   showScanQrPopup?: (params: { text?: string }, cb?: (text: string) => boolean) => void;
   closeScanQrPopup?: () => void;
   showAlert?: (msg: string) => void;
-  initDataUnsafe?: { user?: { id: number; username?: string } };
+  initDataUnsafe?: { user?: { id: number; username?: string }; start_param?: string };
 }
 
 declare global {
@@ -20,6 +20,25 @@ export const tg: TgWebApp | undefined = window.Telegram?.WebApp;
 
 export function initData(): string {
   return tg?.initData ?? '';
+}
+
+/**
+ * The Telegram deep-link payload (`startapp=…` on a Direct Link), delivered by
+ * the WebApp as `initDataUnsafe.start_param`. Falls back to a `?startapp=` URL
+ * query so the flow is testable in a plain browser / dev. Treated as cosmetic
+ * UI context only (never as authorization), so reading it client-side is fine.
+ */
+export function startParam(): string {
+  const fromTg = tg?.initDataUnsafe?.start_param;
+  if (fromTg) return fromTg;
+  return new URLSearchParams(window.location.search).get('startapp') ?? '';
+}
+
+/** Parse `merchant_<id>` (or a bare numeric) from the deep-link payload. */
+export function startMerchantId(): number | null {
+  const m = startParam().match(/^merchant_(\d+)$|^(\d+)$/);
+  if (!m) return null;
+  return Number(m[1] ?? m[2]);
 }
 
 export function alertMsg(msg: string): void {

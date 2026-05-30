@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { alertMsg, scanQr } from './tg.js';
+import { alertMsg, scanQr, startMerchantId } from './tg.js';
 
 interface Me {
   super_admin: boolean;
@@ -35,6 +35,7 @@ interface Member {
 let activeMerchant: number | null = null;
 let merchants: Merchant[] = [];
 let isSuper = false;
+let deepLinkApplied = false; // apply a `startapp=merchant_<id>` preselect at most once
 
 function activeRole(): string | null {
   return merchants.find((m) => m.id === activeMerchant)?.role ?? null;
@@ -48,6 +49,13 @@ export async function renderAdmin(root: HTMLElement): Promise<void> {
   if (!merchants.length && !isSuper) {
     root.innerHTML = '<div class="card">You have no merchant access.</div><a class="link" href="/help">Help &amp; guide</a>';
     return;
+  }
+  // Deep-link preselect: if the caller opened a merchant Direct Link and is staff
+  // of that merchant, focus it (once per session, so manual changes stick after).
+  const startId = startMerchantId();
+  if (!deepLinkApplied && startId !== null && merchants.some((m) => m.id === startId)) {
+    activeMerchant = startId;
+    deepLinkApplied = true;
   }
   if (activeMerchant === null && merchants.length) activeMerchant = merchants[0]!.id;
 

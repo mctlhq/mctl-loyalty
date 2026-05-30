@@ -1,6 +1,6 @@
 import QRCode from 'qrcode';
 import { api } from './api.js';
-import { alertMsg, copyText } from './tg.js';
+import { alertMsg, copyText, startMerchantId } from './tg.js';
 
 interface Me {
   telegram_id: number;
@@ -21,9 +21,18 @@ interface Reward {
   title: string;
   description: string | null;
   cost: number;
+  merchant_id: number | null;
 }
 
 let qrTimer: number | undefined;
+
+// Merchant deep-link context (`startapp=merchant_<id>`): cosmetic UI scope only —
+// shows a welcome banner and narrows the rewards list. Balance/QR/history stay
+// global. `resolvedFor` ensures we resolve a given start id at most once (so a
+// re-render after redeem keeps the banner); "Show all" sets `contextCleared`.
+let merchantContext: { id: number; name: string } | null = null;
+let resolvedFor: number | null = null;
+let contextCleared = false;
 
 // Stop the rotating-QR poll. Called when leaving the user view so the interval
 // does not keep minting tokens / drawing to a detached canvas in the background.
@@ -55,7 +64,31 @@ export async function renderUser(root: HTMLElement): Promise<void> {
       /* not staff */
     }
   }
+  // Resolve the merchant deep-link context once per distinct start id. On any
+  // failure (unknown / inactive / network) fall back silently to the global view.
+  const wantId = startMerchantId();
+  if (wantId !== null && !contextCleared && resolvedFor !== wantId) {
+    resolvedFor = wantId;
+    try {
+      const m = await api.get<{ id: number; name: string }>(`/merchants/${wantId}`);
+      merchantContext = { id: m.id, name: m.name };
+    } catch (err) {
+      console.warn('[deeplink] merchant context unavailable', err);
+      merchantContext = null;
+    }
+  }
+  const ctx = merchantContext;
+
+  const banner = ctx
+    ? `<div class="card">
+        <div><b>You're at ${esc(ctx.name)}</b></div>
+        <div class="muted">Points are one shared community balance — earn and spend them anywhere.</div>
+        <div class="links"><button class="ghost" id="show-all">Show all rewards</button></div>
+      </div>`
+    : '';
+
   root.innerHTML = `
+    ${banner}
     <div class="card">
       <div class="balance"><span>${me.balance}</span><small>points</small></div>
       <div class="muted">${me.username ? '@' + esc(me.username) : 'Telegram user'}</div>
@@ -84,15 +117,35 @@ export async function renderUser(root: HTMLElement): Promise<void> {
     if (ok) alertMsg('ID copied');
   });
 
+  // Clear the deep-link context and re-render the global view.
+  root.querySelector<HTMLButtonElement>('#show-all')?.addEventListener('click', () => {
+    merchantContext = null;
+    contextCleared = true;
+    void renderUser(root);
+  });
+
   const canvas = root.querySelector<HTMLCanvasElement>('#qr')!;
   await refreshQr(canvas);
   if (qrTimer) window.clearInterval(qrTimer);
   qrTimer = window.setInterval(() => void refreshQr(canvas), 30_000);
 
-  const rewards = await api.get<{ rewards: Reward[] }>('/rewards');
+  const allRewards = (await api.get<{ rewards: Reward[] }>('/rewards')).rewards;
+  // In a merchant context, show this place's rewards first, then community-wide
+  // (merchant_id === null) ones, which are redeemable anywhere.
+  let list = allRewards;
+  let rewardsNote = '';
+  if (ctx) {
+    const own = allRewards.filter((r) => r.merchant_id === ctx.id);
+    const global = allRewards.filter((r) => r.merchant_id === null);
+    list = [...own, ...global];
+    if (!own.length && global.length) {
+      rewardsNote = '<div class="muted">No rewards specific to this place yet — community rewards below.</div>';
+    }
+  }
   const rewardsEl = root.querySelector('#rewards')!;
-  rewardsEl.innerHTML = rewards.rewards.length
-    ? rewards.rewards
+  rewardsEl.innerHTML = list.length
+    ? rewardsNote +
+      list
         .map(
           (r) => `<div class="row">
             <div><b>${esc(r.title)}</b><div class="muted">${esc(r.description ?? '')}</div></div>
