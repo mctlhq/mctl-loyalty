@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS merchant_members (
   UNIQUE (merchant_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_merchant_members_user ON merchant_members(user_id);
+-- One employee belongs to at most ONE merchant (DB-level backstop for the rule).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_merchant_members_user ON merchant_members(user_id);
 
 -- Accrual presets. merchant_id NULL = global rule available to every merchant.
 CREATE TABLE IF NOT EXISTS accrual_rules (
