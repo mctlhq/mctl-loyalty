@@ -35,8 +35,10 @@ export const config = {
   initDataMaxAgeSeconds: intEnv('INITDATA_MAX_AGE_SECONDS', 86400),
 
   // When true (local dev only), accept an X-Debug-User-Id header instead of real
-  // Telegram initData. NEVER enable in production.
-  authDevBypass: process.env.AUTH_DEV_BYPASS === 'true',
+  // Telegram initData. Hard-disabled when APP_ENV=production so an accidental
+  // env flag can never open an auth bypass in prod.
+  authDevBypass:
+    process.env.AUTH_DEV_BYPASS === 'true' && (process.env.APP_ENV ?? 'development') !== 'production',
 } as const;
 
 export function isSuperAdmin(telegramId: string | number): boolean {

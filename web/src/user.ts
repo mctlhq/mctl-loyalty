@@ -25,6 +25,15 @@ interface Reward {
 
 let qrTimer: number | undefined;
 
+// Stop the rotating-QR poll. Called when leaving the user view so the interval
+// does not keep minting tokens / drawing to a detached canvas in the background.
+export function stopQrTimer(): void {
+  if (qrTimer) {
+    window.clearInterval(qrTimer);
+    qrTimer = undefined;
+  }
+}
+
 async function refreshQr(canvas: HTMLCanvasElement): Promise<void> {
   try {
     const { token } = await api.get<{ token: string }>('/qr/current');

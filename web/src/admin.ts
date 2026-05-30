@@ -80,6 +80,7 @@ async function doScan(): Promise<void> {
         'Правило:\n' + rules.map((r, i) => `${i + 1}. ${r.name} (+${r.point_value})`).join('\n'),
         '1',
       );
+      if (choice === null) return; // cancelled — abort the scan
       const idx = Number(choice) - 1;
       if (rules[idx]) rule = rules[idx]!;
     }

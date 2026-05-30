@@ -83,7 +83,7 @@ export async function scanAndAccrue(params: {
     if (delta <= 0) throw new LedgerError(400, 'rule has no positive value');
 
     // 3. Serialize same (user,rule) accruals, then enforce the daily limit.
-    await client.query('SELECT pg_advisory_xact_lock($1)', [
+    await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [
       accrualLockKey(targetUserId, rule.id).toString(),
     ]);
     if (rule.daily_limit !== null) {
