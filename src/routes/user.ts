@@ -75,6 +75,31 @@ userRouter.get('/rewards', async (_req, res, next) => {
   }
 });
 
+// Public merchant lookup for any authenticated user. Used by the deep-link
+// (`startapp=merchant_<id>`) to resolve a merchant's name for the context banner.
+// Read-only; returns active merchants only. The `:mid`-scoped staff routes in
+// staffRouter are multi-segment, so they don't collide with this single segment.
+userRouter.get('/merchants/:id', async (req, res, next) => {
+  try {
+    const id = Number.parseInt(req.params.id!, 10);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'bad merchant id' });
+      return;
+    }
+    const { rows } = await pool.query(
+      `SELECT id, name, type FROM merchants WHERE id = $1 AND active`,
+      [id],
+    );
+    if (!rows[0]) {
+      res.status(404).json({ error: 'merchant not found' });
+      return;
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Redeem: spends points immediately and opens a pending redemption.
 userRouter.post('/redeem', async (req, res, next) => {
   try {
