@@ -6,6 +6,7 @@ import { config } from './config.js';
 import { migrate } from './db/migrate.js';
 import { pool } from './db/pool.js';
 import { requireAuth } from './middleware/auth.js';
+import { expireStaleRedemptions } from './services/ledger.js';
 import { adminRouter } from './routes/admin.js';
 import { staffRouter } from './routes/staff.js';
 import { userRouter } from './routes/user.js';
@@ -63,9 +64,29 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: 'internal error' });
 });
 
+// Reverse expired redemption holds, returning the reserved points. Idempotent
+// and safe to run on every replica; logs and swallows errors so a transient DB
+// blip never crashes the loop. Runs once on boot (re-sweeps rows that expired
+// while the pod was down) and then on a fixed interval.
+function sweepExpiredRedemptions(): void {
+  expireStaleRedemptions()
+    .then((n) => {
+      if (n > 0) {
+        // eslint-disable-next-line no-console
+        console.log(`[sweeper] expired ${n} stale redemption(s)`);
+      }
+    })
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[sweeper] expireStaleRedemptions failed', err);
+    });
+}
+
 async function main(): Promise<void> {
   if (config.databaseUrl) {
     await migrate();
+    sweepExpiredRedemptions();
+    setInterval(sweepExpiredRedemptions, 60_000);
   } else {
     // eslint-disable-next-line no-console
     console.warn('[startup] DATABASE_URL not set — skipping migrations (dev only)');

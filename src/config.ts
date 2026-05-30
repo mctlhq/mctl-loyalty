@@ -31,6 +31,14 @@ export const config = {
   // QR token time-to-live in seconds (the dynamic-QR rotation window).
   qrTtlSeconds: intEnv('QR_TTL_SECONDS', 60),
 
+  // Redemption reservation lifetime in seconds (the points hold). After this
+  // the sweeper reverses the hold and returns the points (default 15 min).
+  redemptionTtlSeconds: intEnv('REDEMPTION_TTL_SECONDS', 900),
+
+  // Redemption-QR claim-token lifetime in seconds (default 5 min). Independent
+  // of the reservation: the QR can be re-minted while the redemption is alive.
+  claimTokenTtlSeconds: intEnv('CLAIM_TOKEN_TTL_SECONDS', 300),
+
   // initData freshness window in seconds (reject stale Mini App auth payloads).
   initDataMaxAgeSeconds: intEnv('INITDATA_MAX_AGE_SECONDS', 86400),
 

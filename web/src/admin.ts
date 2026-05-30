@@ -65,7 +65,8 @@ export async function renderAdmin(root: HTMLElement): Promise<void> {
       <label>Merchant
         <select id="merchant">${merchants.map((m) => `<option value="${m.id}">${esc(m.name)} (${m.role})</option>`).join('')}</select>
       </label>
-      <button id="scan" class="primary">Scan QR</button>
+      <button id="scan" class="primary">Scan to award</button>
+      <button id="scan-redeem" class="primary">Scan redemption</button>
     </div>
     <div class="card"><h3>Redemption requests</h3><div id="redemptions">Loading…</div></div>
     <div class="card" id="staff-card"><h3>Staff</h3><div id="staff">Loading…</div></div>
@@ -82,6 +83,7 @@ export async function renderAdmin(root: HTMLElement): Promise<void> {
   });
 
   root.querySelector<HTMLButtonElement>('#scan')!.addEventListener('click', () => void doScan());
+  root.querySelector<HTMLButtonElement>('#scan-redeem')!.addEventListener('click', () => void doRedeemScan(root));
 
   await loadRedemptions(root);
   await loadStaff(root);
@@ -121,9 +123,32 @@ async function doScan(): Promise<void> {
   }
 }
 
+// Scan a customer's redemption QR to capture (fulfill) the reward.
+async function doRedeemScan(root: HTMLElement): Promise<void> {
+  if (!activeMerchant) {
+    alertMsg('Select a merchant');
+    return;
+  }
+  const token = await scanQr();
+  if (!token) return;
+  try {
+    const r = await api.post<{ rewardTitle: string; cost: number }>(
+      `/merchants/${activeMerchant}/redeem-scan`,
+      { token },
+    );
+    alertMsg(`Reward fulfilled: ${r.rewardTitle} (-${r.cost})`);
+    await loadRedemptions(root);
+  } catch (err) {
+    alertMsg((err as Error).message);
+  }
+}
+
 async function loadRedemptions(root: HTMLElement): Promise<void> {
   const el = root.querySelector('#redemptions');
   if (!el) return;
+  // Manual fulfill/cancel are admin-only overrides; scanners use "Scan
+  // redemption" and see the list read-only.
+  const canManage = isSuper || activeRole() === 'admin';
   const { redemptions } = await api.get<{ redemptions: Redemption[] }>('/redemptions');
   el.innerHTML = redemptions.length
     ? redemptions
@@ -132,8 +157,8 @@ async function loadRedemptions(root: HTMLElement): Promise<void> {
             <div><b>${esc(r.reward_title)}</b> — ${r.cost}
               <div class="muted">${r.username ? '@' + esc(r.username) : 'id ' + r.telegram_id} · ${r.status}</div></div>
             ${
-              r.status === 'pending'
-                ? `<span><button data-fulfill="${r.id}">Fulfill</button> <button data-cancel="${r.id}">Cancel</button></span>`
+              r.status === 'pending' && canManage
+                ? `<span><button class="ghost" data-fulfill="${r.id}">Fulfill manually</button> <button data-cancel="${r.id}">Cancel</button></span>`
                 : ''
             }
           </div>`,
@@ -141,16 +166,20 @@ async function loadRedemptions(root: HTMLElement): Promise<void> {
         .join('')
     : '<div class="muted">No requests</div>';
   el.querySelectorAll<HTMLButtonElement>('button[data-fulfill]').forEach((b) =>
-    b.addEventListener('click', () => void act(`/redemptions/${b.dataset.fulfill}/fulfill`, root)),
+    b.addEventListener('click', () => {
+      const reason = window.prompt('Reason for manual fulfill:');
+      if (!reason) return; // empty/cancelled — abort
+      void act(`/redemptions/${b.dataset.fulfill}/fulfill`, root, { reason });
+    }),
   );
   el.querySelectorAll<HTMLButtonElement>('button[data-cancel]').forEach((b) =>
     b.addEventListener('click', () => void act(`/redemptions/${b.dataset.cancel}/cancel`, root)),
   );
 }
 
-async function act(path: string, root: HTMLElement): Promise<void> {
+async function act(path: string, root: HTMLElement, body?: unknown): Promise<void> {
   try {
-    await api.post(path);
+    await api.post(path, body);
     await loadRedemptions(root);
   } catch (err) {
     alertMsg((err as Error).message);

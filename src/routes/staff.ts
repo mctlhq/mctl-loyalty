@@ -6,7 +6,8 @@ import { hashToken } from '../qr/token.js';
 import { notify } from '../telegram/bot.js';
 import {
   audit,
-  cancelRedemption,
+  cancelByStaff,
+  fulfillByClaim,
   fulfillRedemption,
   LedgerError,
   reverseTransaction,
@@ -27,6 +28,26 @@ async function requireAnyStaff(req: Request, res: Response, next: NextFunction):
     );
     if ((rows[0]?.n ?? 0) === 0) {
       res.status(403).json({ error: 'staff only' });
+      return;
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Gate: caller is a super-admin OR a merchant-admin of at least one merchant.
+// Scanners do NOT pass — used for the manual (no-scan) redemption overrides.
+async function requireAnyAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const ctx = getCtx(req);
+    if (ctx.superAdmin) return next();
+    const { rows } = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM merchant_members WHERE user_id = $1 AND role = 'admin'`,
+      [ctx.userId],
+    );
+    if ((rows[0]?.n ?? 0) === 0) {
+      res.status(403).json({ error: 'admin only' });
       return;
     }
     next();
@@ -166,6 +187,35 @@ staffRouter.post('/merchants/:mid/scan', requireMember(['admin', 'scanner']), as
   }
 });
 
+// Scan a user's redemption QR and capture (fulfill) the reward. The claim token
+// is matched + burned atomically in fulfillByClaim, which also enforces that the
+// reward is redeemable at this merchant and that only one scanner can win a race.
+staffRouter.post('/merchants/:mid/redeem-scan', requireMember(['admin', 'scanner']), async (req, res, next) => {
+  try {
+    const ctx = getCtx(req);
+    const mid = Number.parseInt(req.params.mid!, 10);
+    const token = String(req.body?.token ?? '');
+    if (!token) {
+      res.status(400).json({ error: 'token required' });
+      return;
+    }
+    const { rewardTitle, cost, targetTelegramId } = await fulfillByClaim({
+      claimTokenHash: hashToken(token),
+      merchantId: mid,
+      scannerUserId: ctx.userId,
+    });
+    await audit(ctx.userId, 'redemption.fulfill_by_scan', {
+      merchantId: mid,
+      targetType: 'redemption',
+      meta: { reward_title: rewardTitle, cost },
+    });
+    void notify(targetTelegramId, `Reward fulfilled: ${rewardTitle} (-${cost} points)`);
+    res.json({ rewardTitle, cost });
+  } catch (err) {
+    sendLedgerError(res, err, next);
+  }
+});
+
 // Pending/recent redemptions across the catalog (global single currency).
 staffRouter.get('/redemptions', requireAnyStaff, async (_req, res, next) => {
   try {
@@ -184,23 +234,31 @@ staffRouter.get('/redemptions', requireAnyStaff, async (_req, res, next) => {
   }
 });
 
-staffRouter.post('/redemptions/:id/fulfill', requireAnyStaff, async (req, res, next) => {
+// Manual fulfill fallback (no merchant scan). Restricted to super-admins /
+// merchant-admins (scanners must use redeem-scan), and requires a reason that is
+// recorded in the audit log so out-of-band captures are accountable.
+staffRouter.post('/redemptions/:id/fulfill', requireAnyAdmin, async (req, res, next) => {
   try {
     const ctx = getCtx(req);
     const id = Number.parseInt(req.params.id!, 10);
+    const reason = String(req.body?.reason ?? '').trim();
+    if (!reason) {
+      res.status(400).json({ error: 'reason required' });
+      return;
+    }
     await fulfillRedemption(id, ctx.userId);
-    await audit(ctx.userId, 'redemption.fulfill', { targetType: 'redemption', targetId: id });
+    await audit(ctx.userId, 'redemption.fulfill', { targetType: 'redemption', targetId: id, meta: { reason } });
     res.json({ ok: true });
   } catch (err) {
     sendLedgerError(res, err, next);
   }
 });
 
-staffRouter.post('/redemptions/:id/cancel', requireAnyStaff, async (req, res, next) => {
+staffRouter.post('/redemptions/:id/cancel', requireAnyAdmin, async (req, res, next) => {
   try {
     const ctx = getCtx(req);
     const id = Number.parseInt(req.params.id!, 10);
-    await cancelRedemption(id, ctx.userId);
+    await cancelByStaff(id, ctx.userId);
     await audit(ctx.userId, 'redemption.cancel', { targetType: 'redemption', targetId: id });
     res.json({ ok: true });
   } catch (err) {

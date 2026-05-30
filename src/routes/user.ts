@@ -3,7 +3,7 @@ import { config } from '../config.js';
 import { pool } from '../db/pool.js';
 import { getCtx } from '../middleware/auth.js';
 import { mintToken } from '../qr/token.js';
-import { LedgerError, redeem } from '../services/ledger.js';
+import { cancelByUser, LedgerError, mintClaimToken, redeem } from '../services/ledger.js';
 
 export const userRouter = Router();
 
@@ -42,14 +42,17 @@ userRouter.get('/qr/current', async (req, res, next) => {
   }
 });
 
-// Global points history.
+// Global points history. Joins the redemption so the UI can phrase the
+// lifecycle (reserved / fulfilled / cancelled / expired) per spend/reversal txn.
 userRouter.get('/transactions', async (req, res, next) => {
   try {
     const ctx = getCtx(req);
     const { rows } = await pool.query(
-      `SELECT t.id, t.delta, t.type, t.reason, t.merchant_id, m.name AS merchant_name, t.created_at
+      `SELECT t.id, t.delta, t.type, t.reason, t.merchant_id, m.name AS merchant_name,
+              r.status AS redemption_status, t.created_at
          FROM transactions t
          LEFT JOIN merchants m ON m.id = t.merchant_id
+         LEFT JOIN redemptions r ON r.id = t.redemption_id
         WHERE t.user_id = $1
         ORDER BY t.created_at DESC
         LIMIT 100`,
@@ -57,6 +60,67 @@ userRouter.get('/transactions', async (req, res, next) => {
     );
     res.json({ transactions: rows });
   } catch (err) {
+    next(err);
+  }
+});
+
+// The caller's own pending redemptions (the active points holds). Drives the
+// redemption-QR cards at the top of the user view.
+userRouter.get('/redemptions/mine', async (req, res, next) => {
+  try {
+    const ctx = getCtx(req);
+    const { rows } = await pool.query(
+      `SELECT r.id, rw.title AS reward_title, r.cost, r.expires_at, r.claim_token_expires_at
+         FROM redemptions r
+         JOIN rewards rw ON rw.id = r.reward_id
+        WHERE r.user_id = $1 AND r.status = 'pending'
+        ORDER BY r.created_at DESC`,
+      [ctx.userId],
+    );
+    res.json({ redemptions: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Re-mint the claim token (redemption QR) for the caller's own pending
+// redemption. Invalidates any previous QR. Returns the raw token once.
+userRouter.post('/redemptions/:id/qr', async (req, res, next) => {
+  try {
+    const ctx = getCtx(req);
+    const id = Number.parseInt(req.params.id!, 10);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'bad redemption id' });
+      return;
+    }
+    const result = await mintClaimToken(id, ctx.userId);
+    res.json(result);
+  } catch (err) {
+    if (err instanceof LedgerError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    next(err);
+  }
+});
+
+// Owner-cancels their own pending redemption (points returned, stock restored).
+// Mounted at /my-redemptions to avoid colliding with the staff cancel route.
+userRouter.post('/my-redemptions/:id/cancel', async (req, res, next) => {
+  try {
+    const ctx = getCtx(req);
+    const id = Number.parseInt(req.params.id!, 10);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'bad redemption id' });
+      return;
+    }
+    await cancelByUser(id, ctx.userId);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof LedgerError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
     next(err);
   }
 });

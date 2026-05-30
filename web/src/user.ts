@@ -14,7 +14,15 @@ interface Txn {
   type: string;
   reason: string | null;
   merchant_name: string | null;
+  redemption_status: string | null;
   created_at: string;
+}
+interface PendingRedemption {
+  id: number;
+  reward_title: string;
+  cost: number;
+  expires_at: string;
+  claim_token_expires_at: string;
 }
 interface Reward {
   id: number;
@@ -25,6 +33,14 @@ interface Reward {
 }
 
 let qrTimer: number | undefined;
+// Per-redemption-card countdown intervals, cleared on every re-render so detached
+// timers (cards removed from the DOM) never leak.
+let redemptionTimers: number[] = [];
+
+function clearRedemptionTimers(): void {
+  for (const t of redemptionTimers) window.clearInterval(t);
+  redemptionTimers = [];
+}
 
 // Merchant deep-link context (`startapp=merchant_<id>`): cosmetic UI scope only —
 // shows a welcome banner and narrows the rewards list. Balance/QR/history stay
@@ -41,6 +57,7 @@ export function stopQrTimer(): void {
     window.clearInterval(qrTimer);
     qrTimer = undefined;
   }
+  clearRedemptionTimers();
 }
 
 async function refreshQr(canvas: HTMLCanvasElement): Promise<void> {
@@ -53,6 +70,8 @@ async function refreshQr(canvas: HTMLCanvasElement): Promise<void> {
 }
 
 export async function renderUser(root: HTMLElement): Promise<void> {
+  // Drop any countdown timers from a previous render before rebuilding the DOM.
+  clearRedemptionTimers();
   const me = await api.get<Me>('/me');
   // Staff (scanner/merchant-admin) and super-admins get the Admin panel link.
   let isStaff = me.super_admin;
@@ -89,6 +108,7 @@ export async function renderUser(root: HTMLElement): Promise<void> {
 
   root.innerHTML = `
     ${banner}
+    <div id="pending-redemptions"></div>
     <div class="card">
       <div class="balance"><span>${me.balance}</span><small>points</small></div>
       <div class="muted">${me.username ? '@' + esc(me.username) : 'Telegram user'}</div>
@@ -129,6 +149,8 @@ export async function renderUser(root: HTMLElement): Promise<void> {
   if (qrTimer) window.clearInterval(qrTimer);
   qrTimer = window.setInterval(() => void refreshQr(canvas), 30_000);
 
+  await renderPendingRedemptions(root);
+
   const allRewards = (await api.get<{ rewards: Reward[] }>('/rewards')).rewards;
   // In a merchant context, show this place's rewards first, then community-wide
   // (merchant_id === null) ones, which are redeemable anywhere.
@@ -158,10 +180,10 @@ export async function renderUser(root: HTMLElement): Promise<void> {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       try {
-        const r = await api.post<{ balance: number; rewardTitle: string }>('/redeem', {
-          reward_id: Number(btn.dataset.reward),
-        });
-        alertMsg(`Redeemed "${r.rewardTitle}". Balance: ${r.balance}`);
+        // Reserve the reward (points go on hold) and re-render so the new
+        // redemption-QR card appears at the top — no instant "done" alert; the
+        // reward is only captured once a merchant scans the QR.
+        await api.post('/redeem', { reward_id: Number(btn.dataset.reward) });
         await renderUser(root);
       } catch (err) {
         alertMsg((err as Error).message);
@@ -176,12 +198,123 @@ export async function renderUser(root: HTMLElement): Promise<void> {
     ? txns.transactions
         .map(
           (t) => `<div class="row">
-            <div>${esc(t.reason ?? t.type)}<div class="muted">${fmt(t.created_at)}${t.merchant_name ? ' · ' + esc(t.merchant_name) : ''}</div></div>
+            <div>${esc(txnLabel(t))}<div class="muted">${fmt(t.created_at)}${t.merchant_name ? ' · ' + esc(t.merchant_name) : ''}</div></div>
             <span class="${t.delta >= 0 ? 'pos' : 'neg'}">${t.delta >= 0 ? '+' : ''}${t.delta}</span>
           </div>`,
         )
         .join('')
     : '<div class="muted">No operations yet</div>';
+}
+
+// Phrase a history row by transaction type + redemption lifecycle status.
+function txnLabel(t: Txn): string {
+  const n = Math.abs(t.delta);
+  if (t.type === 'spend') {
+    if (t.redemption_status === 'pending') return `Reward reserved · ${n} points on hold`;
+    if (t.redemption_status === 'fulfilled') return `Reward fulfilled · ${n} points spent`;
+  }
+  if (t.type === 'reversal' && t.redemption_status) {
+    if (t.redemption_status === 'expired') return `Reward expired · ${n} points returned`;
+    if (
+      t.redemption_status === 'cancelled_by_user' ||
+      t.redemption_status === 'cancelled_by_staff'
+    ) {
+      return `Reward cancelled · ${n} points returned`;
+    }
+  }
+  return t.reason ?? t.type;
+}
+
+// Render the caller's pending-redemption QR cards into #pending-redemptions.
+// Each card holds a live QR (the claim token), a mm:ss countdown to the token
+// expiry (offering a Refresh QR action when it lapses), and a Cancel button.
+async function renderPendingRedemptions(root: HTMLElement): Promise<void> {
+  const host = root.querySelector<HTMLElement>('#pending-redemptions');
+  if (!host) return;
+  let pending: PendingRedemption[];
+  try {
+    pending = (await api.get<{ redemptions: PendingRedemption[] }>('/redemptions/mine')).redemptions;
+  } catch (err) {
+    console.error('redemptions/mine', err);
+    return;
+  }
+  if (!pending.length) {
+    host.innerHTML = '';
+    return;
+  }
+  host.innerHTML = pending
+    .map(
+      (p) => `<div class="card center" data-redemption="${p.id}">
+        <div><b>${esc(p.reward_title)}</b></div>
+        <div class="muted">${p.cost} points on hold — show this QR to staff to collect</div>
+        <canvas class="redeem-qr"></canvas>
+        <div class="muted"><span class="redeem-countdown"></span></div>
+        <div class="links">
+          <button class="ghost redeem-cancel">Cancel</button>
+        </div>
+      </div>`,
+    )
+    .join('');
+
+  for (const p of pending) {
+    const card = host.querySelector<HTMLElement>(`[data-redemption="${p.id}"]`);
+    if (!card) continue;
+    const canvas = card.querySelector<HTMLCanvasElement>('.redeem-qr')!;
+    const countdown = card.querySelector<HTMLElement>('.redeem-countdown')!;
+
+    let tokenExpiresMs = new Date(p.claim_token_expires_at).getTime();
+
+    const drawQr = async (token: string): Promise<void> => {
+      await QRCode.toCanvas(canvas, token, { width: 200, margin: 1 });
+    };
+
+    // Initial QR: mint a fresh claim token for this redemption.
+    try {
+      const minted = await api.post<{ claimToken: string; claimTokenExpiresAt: string }>(
+        `/redemptions/${p.id}/qr`,
+      );
+      tokenExpiresMs = new Date(minted.claimTokenExpiresAt).getTime();
+      await drawQr(minted.claimToken);
+    } catch (err) {
+      console.error('mint claim token', err);
+    }
+
+    const tick = (): void => {
+      const remaining = Math.round((tokenExpiresMs - Date.now()) / 1000);
+      if (remaining > 0) {
+        const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
+        const ss = String(remaining % 60).padStart(2, '0');
+        countdown.textContent = `QR valid for ${mm}:${ss}`;
+      } else {
+        countdown.innerHTML = 'QR expired — <button class="ghost redeem-refresh">Refresh QR</button>';
+        countdown.querySelector<HTMLButtonElement>('.redeem-refresh')?.addEventListener(
+          'click',
+          async () => {
+            try {
+              const minted = await api.post<{ claimToken: string; claimTokenExpiresAt: string }>(
+                `/redemptions/${p.id}/qr`,
+              );
+              tokenExpiresMs = new Date(minted.claimTokenExpiresAt).getTime();
+              await drawQr(minted.claimToken);
+            } catch (err) {
+              alertMsg((err as Error).message);
+            }
+          },
+        );
+      }
+    };
+    tick();
+    redemptionTimers.push(window.setInterval(tick, 1000));
+
+    card.querySelector<HTMLButtonElement>('.redeem-cancel')!.addEventListener('click', async () => {
+      try {
+        await api.post(`/my-redemptions/${p.id}/cancel`);
+        await renderUser(root);
+      } catch (err) {
+        alertMsg((err as Error).message);
+      }
+    });
+  }
 }
 
 function esc(s: string): string {
