@@ -13,7 +13,7 @@ async function route(): Promise<void> {
     const path = location.pathname;
     if (path.startsWith('/help') || path.startsWith('/docs')) {
       stopQrTimer();
-      renderDocs(root);
+      await renderDocs(root);
     } else if (path.startsWith('/admin')) {
       stopQrTimer(); // leaving the user view — stop the background QR poll
       await renderAdmin(root);

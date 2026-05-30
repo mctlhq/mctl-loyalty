@@ -45,6 +45,16 @@ async function refreshQr(canvas: HTMLCanvasElement): Promise<void> {
 
 export async function renderUser(root: HTMLElement): Promise<void> {
   const me = await api.get<Me>('/me');
+  // Staff (scanner/merchant-admin) and super-admins get the Admin panel link.
+  let isStaff = me.super_admin;
+  if (!isStaff) {
+    try {
+      const { merchants } = await api.get<{ merchants: unknown[] }>('/staff/merchants');
+      isStaff = merchants.length > 0;
+    } catch {
+      /* not staff */
+    }
+  }
   root.innerHTML = `
     <div class="card">
       <div class="balance"><span>${me.balance}</span><small>points</small></div>
@@ -64,7 +74,7 @@ export async function renderUser(root: HTMLElement): Promise<void> {
       <div id="txns">Loading…</div>
     </div>
     <div class="links">
-      ${me.super_admin ? '<a class="link" href="/admin">Admin panel →</a>' : ''}
+      ${isStaff ? '<a class="link" href="/admin">Admin panel →</a>' : ''}
       <a class="link" href="/help">Help &amp; guide</a>
     </div>
   `;
