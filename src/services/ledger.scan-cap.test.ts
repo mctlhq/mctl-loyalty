@@ -9,7 +9,7 @@
 // Run locally with a throwaway DB, e.g.:
 //   docker run --rm -d -p 55432:5432 -e POSTGRES_PASSWORD=pw --name loyalty-test-pg postgres:16
 //   DATABASE_URL=postgres://postgres:pw@localhost:55432/postgres DATABASE_SSL=false npm test
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { pool } from '../db/pool.js';
 import { migrate } from '../db/migrate.js';
@@ -17,6 +17,12 @@ import { scanAndAccrue, LedgerError } from './ledger.js';
 import { mintToken } from '../qr/token.js';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
+
+// Close the shared pool exactly once, after all tests in this file — not inside a
+// single test's finally, which would break any sibling test in the same process.
+after(async () => {
+  if (hasDb) await pool.end();
+});
 
 test(
   'two different rule_ids at one merchant cannot double-accrue a user the same day',
@@ -115,9 +121,9 @@ test(
       assert.equal(burned, null, 'failed scan rolls back the QR-token burn');
     } finally {
       // Cleanup (cascades remove wallets, tokens, transactions, accruals, rules).
+      // The pool is closed once in the after() hook above, not here.
       await pool.query(`DELETE FROM merchants WHERE id = $1`, [merchant]);
       await pool.query(`DELETE FROM users WHERE id = ANY($1)`, [[target, scanner]]);
-      await pool.end();
     }
   },
 );
