@@ -3,7 +3,7 @@
 Telegram Mini App **community loyalty** system. Node/TS + Express + PostgreSQL,
 deployed to the mctl platform (`labs` tenant). Live at **`rewards.mctl.ai`**
 (legacy `labs-mctl-loyalty.mctl.ai` / `.mctl.me` kept as permanent aliases).
-Bot: **@MCTL Rewards** (`@mctl_rewards_bot`). Current image: **0.5.0**.
+Bot: **@MCTL Rewards** (`@mctl_rewards_bot`). Current image: **0.8.0**.
 
 ## What it does
 - **One points balance per user, global across all merchants** (a single community
@@ -64,6 +64,10 @@ Bot: **@MCTL Rewards** (`@mctl_rewards_bot`). Current image: **0.5.0**.
   `cancelled_by_user`/`cancelled_by_staff`/`expired`; 15-min reservation + 5-min re-mintable QR;
   60 s expiry sweeper; manual fulfill admin-only + requires reason).
 - 0.5.0 — public Astro landing at `/`; Mini App moved under `/_miniapp`.
+- 0.6.0 — landing: real app screenshot in a device frame.
+- 0.7.0 — Telegram hand-off for `/app`+`/admin`; `/help` collapsed into `/docs`.
+- 0.8.0 — landing redesign to "Direction C · Minimal Editorial" (light/Onest/blue;
+  zero-JS Astro phone + admin mockups).
 
 ## Conventions
 - Conventional commits; semver tags **without** `v` prefix. No emoji in code/commits.
