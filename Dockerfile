@@ -1,10 +1,14 @@
 # ---- build backend (TS -> dist) ----
+# Build ONLY the backend here. The root `build` script orchestrates
+# landing+web+api together for local dev; in Docker each stage builds its own
+# part in isolation, so this stage uses build:api (landing/ and web/ are not
+# copied into this stage, so a full `npm run build` would fail on `cd landing`).
 FROM node:22.11-alpine3.20 AS build-api
 WORKDIR /app
 COPY package*.json tsconfig.json ./
 RUN npm ci
 COPY src ./src
-RUN npm run build
+RUN npm run build:api
 
 # ---- build marketing landing (Astro -> /app/public) ----
 # Astro's outDir is ../public, so this stage writes /app/public (the landing
