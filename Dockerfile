@@ -20,9 +20,10 @@ RUN npm ci
 COPY landing/ ./
 RUN npm run build
 
-# ---- build frontend SPA (Vite -> /app/web/public/_miniapp) ----
-# vite outDir is ../public/_miniapp, so this stage writes the SPA into
-# /app/web/public/_miniapp (assets under /_miniapp/assets).
+# ---- build frontend SPA (Vite -> /app/public/_miniapp) ----
+# vite outDir is ../public/_miniapp, resolved relative to the project root
+# (/app/web), so this stage writes the SPA to /app/public/_miniapp (one level
+# up from /app/web), with assets under /_miniapp/assets.
 FROM node:22.11-alpine3.20 AS build-web
 WORKDIR /app/web
 COPY web/package*.json ./
@@ -46,7 +47,7 @@ COPY --from=build-api /app/dist ./dist
 # Neither COPY overwrites the other: landing writes to ./public/* (no _miniapp),
 # the SPA writes only to ./public/_miniapp.
 COPY --from=build-landing /app/public ./public
-COPY --from=build-web /app/web/public/_miniapp ./public/_miniapp
+COPY --from=build-web /app/public/_miniapp ./public/_miniapp
 
 RUN addgroup -S app && adduser -S -G app -h /home/app app && chown -R app:app /app
 USER app
