@@ -1,0 +1,38 @@
+---
+// "Points & history" screen — earned balance + a transaction history list.
+import MckChrome from '../MckChrome.astro';
+
+const ops = [
+  ['Roasters Coffee', 'Today · 14:20', '+40'],
+  ['Form Bookstore', 'Yesterday', '+120'],
+  ['Specialty coffee', 'Reward claimed', '−120'],
+  ['Loop Bar', 'Mon', '+30'],
+];
+---
+
+<div class="mck-app">
+  <MckChrome />
+  <div class="mck-points">
+    <div class="mck-balance"><span class="mck-balance-n">1,240</span><span class="mck-balance-u">points</span></div>
+    <div class="mck-user">@dmitriimashkov</div>
+    <div class="mck-idline">
+      <span class="mck-id-k">ID:</span>
+      <span class="mck-id-v">924671154</span>
+      <span class="mck-copy">Copy</span>
+    </div>
+  </div>
+  <div class="mck-history">
+    <div class="mck-card-title">History</div>
+    {
+      ops.map((o, i) => (
+        <div class:list={['mck-op-row', { 'mck-row-bt': i }]}>
+          <div>
+            <div class="mck-op-label">{o[0]}</div>
+            <div class="mck-op-sub">{o[1]}</div>
+          </div>
+          <div class:list={['mck-op-delta', o[0] && o[2].startsWith('+') ? 'mck-pos' : 'mck-neg']}>{o[2]}</div>
+        </div>
+      ))
+    }
+  </div>
+</div>

@@ -1,0 +1,41 @@
+---
+// Super-admin Mini App panel — program setup (verbatim from the design's
+// admin-screens.jsx, all English).
+import MckChrome from '../MckChrome.astro';
+---
+
+<div class="mck-app">
+  <MckChrome time="10:00" />
+  <div class="mck-super">
+    <div class="mck-super-title">Super-admin</div>
+    <div class="mck-groups">
+      <fieldset class="mck-group">
+        <legend class="mck-legend">New merchant</legend>
+        <div class="mck-input">Name</div>
+        <div class="mck-select"><span>shop</span><span class="mck-caret">▾</span></div>
+        <div class="mck-btn">Create</div>
+      </fieldset>
+      <fieldset class="mck-group">
+        <legend class="mck-legend">Add staff (any merchant)</legend>
+        <div class="mck-select"><span>Capulus Coffee</span><span class="mck-caret">▾</span></div>
+        <div class="mck-input">telegram_id</div>
+        <div class="mck-select"><span>scanner</span><span class="mck-caret">▾</span></div>
+        <div class="mck-btn">Add</div>
+      </fieldset>
+      <fieldset class="mck-group">
+        <legend class="mck-legend">Accrual rule</legend>
+        <div class="mck-input">e.g. Visit</div>
+        <div class="mck-input">Points</div>
+        <div class="mck-input">Daily limit (empty = none)</div>
+        <div class="mck-btn">Create (global)</div>
+      </fieldset>
+      <fieldset class="mck-group">
+        <legend class="mck-legend">Reward</legend>
+        <div class="mck-input">Title</div>
+        <div class="mck-input">Cost</div>
+        <div class="mck-input">Stock (empty = ∞)</div>
+        <div class="mck-btn">Create (global)</div>
+      </fieldset>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,37 @@
+---
+// Merchant-staff Mini App panel — the counter (verbatim from the design's
+// admin-screens.jsx, all English).
+import MckChrome from '../MckChrome.astro';
+---
+
+<div class="mck-app">
+  <MckChrome time="10:00" />
+  <div class="mck-acard">
+    <div class="mck-card-title">Scanning</div>
+    <div class="mck-field-label">Merchant</div>
+    <div class="mck-stack">
+      <div class="mck-select"><span>Capulus Coffee (admin)</span><span class="mck-caret">▾</span></div>
+      <div class="mck-btn mck-btn-full">Scan to award</div>
+      <div class="mck-btn mck-btn-full">Scan redemption</div>
+    </div>
+  </div>
+  <div class="mck-acard">
+    <div class="mck-card-title">Redemption requests</div>
+    <div class="mck-req">
+      <span class="mck-req-title">Specialty coffee</span>
+      <span class="mck-req-cost">— 120</span>
+    </div>
+    <div class="mck-req-sub">@MashkovD · <span class="mck-pos">fulfilled</span></div>
+  </div>
+  <div class="mck-acard">
+    <div class="mck-card-title mck-card-title-tight">Staff</div>
+    <div class="mck-card-sub">Ask the employee to open the bot and copy their ID from their profile screen.</div>
+    <div class="mck-empty mck-empty-tight">No staff yet</div>
+    <fieldset class="mck-group">
+      <legend class="mck-legend">Add staff</legend>
+      <div class="mck-input">telegram_id</div>
+      <div class="mck-select"><span>scanner</span><span class="mck-caret">▾</span></div>
+      <div class="mck-btn">Add</div>
+    </fieldset>
+  </div>
+</div>
