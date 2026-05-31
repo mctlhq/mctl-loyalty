@@ -3,6 +3,7 @@ import { pool } from '../db/pool.js';
 import { getCtx, requireSuperAdmin } from '../middleware/auth.js';
 import { audit, LedgerError } from '../services/ledger.js';
 import { addMember } from '../services/members.js';
+import { createRule, deleteRule, listAllRules, updateRule } from '../services/rules.js';
 
 export const adminRouter = Router();
 
@@ -67,31 +68,85 @@ adminRouter.post('/merchants/:mid/members', async (req, res, next) => {
   }
 });
 
+// Full cross-merchant rule list (globals + every merchant's own rules), with the
+// owning merchant's name labeled. Super-admin only (router-level guard).
+adminRouter.get('/rules', async (_req, res, next) => {
+  try {
+    const rules = await listAllRules();
+    res.json({ rules });
+  } catch (err) {
+    next(err);
+  }
+});
+
 adminRouter.post('/rules', async (req, res, next) => {
   try {
     const ctx = getCtx(req);
+    // Super-admin may target any scope: NULL = global, a number = that merchant.
     const merchantId = req.body?.merchant_id != null ? Number.parseInt(String(req.body.merchant_id), 10) : null;
-    const name = String(req.body?.name ?? '').trim();
-    const kind = String(req.body?.kind ?? 'fixed');
-    const pointValue = Number.parseInt(String(req.body?.point_value ?? '0'), 10) || 0;
-    const rate = req.body?.rate != null ? Number(req.body.rate) : null;
-    const dailyLimit = req.body?.daily_limit != null ? Number.parseInt(String(req.body.daily_limit), 10) : null;
-    if (!name) {
-      res.status(400).json({ error: 'name required' });
-      return;
-    }
-    if (!['fixed', 'amount'].includes(kind)) {
-      res.status(400).json({ error: 'invalid kind' });
-      return;
-    }
-    const { rows } = await pool.query<{ id: number }>(
-      `INSERT INTO accrual_rules (merchant_id, name, kind, point_value, rate, daily_limit)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [merchantId, name, kind, pointValue, rate, dailyLimit],
-    );
-    await audit(ctx.userId, 'rule.create', { merchantId, targetType: 'rule', targetId: rows[0]!.id, meta: { name, kind, pointValue, dailyLimit } });
-    res.json({ id: rows[0]!.id });
+    const { id } = await createRule(merchantId, {
+      name: req.body?.name,
+      kind: req.body?.kind,
+      point_value: req.body?.point_value,
+      rate: req.body?.rate,
+      daily_limit: req.body?.daily_limit,
+      active: req.body?.active,
+    });
+    await audit(ctx.userId, 'rule.create', { merchantId, targetType: 'rule', targetId: id, meta: { name: req.body?.name } });
+    res.json({ id });
   } catch (err) {
+    if (err instanceof LedgerError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    next(err);
+  }
+});
+
+// Update / delete ANY rule (globals or any merchant's). Unscoped — super-admin only.
+adminRouter.patch('/rules/:rid', async (req, res, next) => {
+  try {
+    const ctx = getCtx(req);
+    const rid = Number.parseInt(req.params.rid!, 10);
+    if (!Number.isFinite(rid)) {
+      res.status(400).json({ error: 'bad rule id' });
+      return;
+    }
+    await updateRule(rid, {
+      name: req.body?.name,
+      kind: req.body?.kind,
+      point_value: req.body?.point_value,
+      rate: req.body?.rate,
+      daily_limit: req.body?.daily_limit,
+      active: req.body?.active,
+    });
+    await audit(ctx.userId, 'rule.update', { targetType: 'rule', targetId: rid });
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof LedgerError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    next(err);
+  }
+});
+
+adminRouter.delete('/rules/:rid', async (req, res, next) => {
+  try {
+    const ctx = getCtx(req);
+    const rid = Number.parseInt(req.params.rid!, 10);
+    if (!Number.isFinite(rid)) {
+      res.status(400).json({ error: 'bad rule id' });
+      return;
+    }
+    await deleteRule(rid);
+    await audit(ctx.userId, 'rule.delete', { targetType: 'rule', targetId: rid });
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof LedgerError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
     next(err);
   }
 });

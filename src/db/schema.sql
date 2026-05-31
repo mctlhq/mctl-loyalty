@@ -51,6 +51,12 @@ CREATE TABLE IF NOT EXISTS accrual_rules (
   active       BOOLEAN NOT NULL DEFAULT TRUE,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Idempotent migration for existing DBs: back-fill the per-merchant scope column
+-- (fresh installs get it from the CREATE TABLE above; this is a no-op there).
+-- NULL stays = global rule available to every merchant; existing rows untouched.
+ALTER TABLE accrual_rules
+  ADD COLUMN IF NOT EXISTS merchant_id BIGINT REFERENCES merchants(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_accrual_rules_merchant ON accrual_rules(merchant_id);
 
 -- Append-only points ledger. The balance is always the sum of deltas.
 CREATE TABLE IF NOT EXISTS transactions (
