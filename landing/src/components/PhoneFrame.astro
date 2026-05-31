@@ -9,7 +9,7 @@ const { w = 256 } = Astro.props;
 const h = Math.round(w * 2.08);
 ---
 
-<div class="mck-phone" style={`--w:${w}px;--h:${h}px;`}>
+<div class="mck-phone" style={`--w:${w}px;--h:${h}px;`} aria-hidden="true">
   <div class="mck-screen">
     <span class="mck-notch"></span>
     <slot />
