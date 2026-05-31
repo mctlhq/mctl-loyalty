@@ -9,7 +9,10 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && cp src/db/schema.sql dist/db/schema.sql",
+    "build": "npm run build:landing && npm run build:web && npm run build:api",
+    "build:landing": "cd landing && npm install && npm run build",
+    "build:web": "cd web && npm install && npm run build",
+    "build:api": "tsc -p tsconfig.json && cp src/db/schema.sql dist/db/schema.sql",
     "start": "node dist/server.js",
     "dev": "node --watch --experimental-strip-types src/server.ts",
     "type-check": "tsc -p tsconfig.json --noEmit"
