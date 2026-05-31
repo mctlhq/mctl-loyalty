@@ -132,6 +132,7 @@ export async function updateRule(
       lookup.push(scopeMerchantId);
     }
     const existing = await client.query<{
+      merchant_id: number | null;
       name: string;
       kind: string;
       point_value: number;
@@ -139,7 +140,7 @@ export async function updateRule(
       daily_limit: number | null;
       active: boolean;
     }>(
-      `SELECT name, kind, point_value, rate, daily_limit, active
+      `SELECT merchant_id, name, kind, point_value, rate, daily_limit, active
          FROM accrual_rules WHERE ${where} FOR UPDATE`,
       lookup,
     );
@@ -154,7 +155,12 @@ export async function updateRule(
       daily_limit: input.daily_limit !== undefined ? input.daily_limit : cur.daily_limit,
       active: input.active !== undefined ? input.active : cur.active,
     };
-    const r = normaliseInput(merged, { requireDailyLimit: scopeMerchantId !== undefined });
+    // Drive the daily-limit requirement off the row's PERSISTED scope, not the caller:
+    // a merchant-scoped rule must keep a daily_limit even when an unscoped super-admin
+    // edits it (otherwise a super-admin could clear it with { daily_limit: null }).
+    const r = normaliseInput(merged, {
+      requireDailyLimit: scopeMerchantId !== undefined || cur.merchant_id !== null,
+    });
     await client.query(
       `UPDATE accrual_rules
           SET name = $1, kind = $2, point_value = $3, rate = $4, daily_limit = $5, active = $6
