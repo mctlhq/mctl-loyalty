@@ -37,3 +37,5 @@ mctl `labs` tenant. See [CLAUDE.md](./CLAUDE.md) for development details.
 ## License
 
 Apache-2.0.
+
+<!-- claude-review smoke test: verifying the auto-review token works; this PR will be closed. -->
