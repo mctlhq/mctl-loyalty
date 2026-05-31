@@ -66,6 +66,11 @@ app.get(['/app', '/app/*', '/admin', '/admin/*', '/docs', '/docs/*'], (_req, res
   res.sendFile(resolve(PUBLIC_DIR, '_miniapp', 'index.html'));
 });
 
+// legacy /help collapsed into /docs (0.7.0); redirect permanently so old bookmarks still work.
+app.get(['/help', '/help/*'], (_req, res) => {
+  res.redirect(301, '/docs');
+});
+
 // ---- catch-all ----
 // Unknown paths fall through to the landing's 404 page (or home if absent).
 app.use((req: Request, res: Response, next: NextFunction) => {

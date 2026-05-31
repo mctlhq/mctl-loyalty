@@ -41,7 +41,8 @@ Bot: **@MCTL Rewards** (`@mctl_rewards_bot`). Current image: **0.8.0**.
 ## Routing (Express, `src/server.ts`)
 - `/api/*` — backend (registered BEFORE static).
 - `/` — Astro landing (`public/index.html`), public, no auth.
-- `/app`, `/admin`, `/help`, `/docs` — SPA fallback → `public/_miniapp/index.html`.
+- `/app`, `/admin`, `/docs` — SPA fallback → `public/_miniapp/index.html`.
+- `/help` — permanent 301 redirect → `/docs` (legacy route, collapsed into `/docs`).
 - `/_astro/*`, `/_miniapp/*`, `/privacy`, `/terms`, `/favicon.svg` — static files.
 - unknown path → `public/404.html` (else redirect `/`).
 - The Telegram Menu Button + deep links point to **`/app`**, never `/`.
