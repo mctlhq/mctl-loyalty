@@ -128,7 +128,7 @@ export async function renderUser(root: HTMLElement): Promise<void> {
     </div>
     <div class="links">
       ${isStaff ? '<a class="link" href="/admin">Admin panel →</a>' : ''}
-      <a class="link" href="/help">Help &amp; guide</a>
+      <a class="link" href="/docs">Help &amp; guide</a>
     </div>
   `;
 

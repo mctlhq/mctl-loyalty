@@ -1,6 +1,7 @@
-// Role-aware help/guide. In-app (/help) it fetches the caller's role and shows
-// only the relevant sections. In a plain browser (/docs, no Telegram auth) the
-// calls 401 and it shows the public customer guide only.
+// Role-aware help/guide at /docs (also linked in-app as "Help & guide"). Inside
+// Telegram it fetches the caller's role and shows only the relevant sections.
+// In a plain browser (no Telegram auth) the calls 401 and it shows the public
+// customer guide only.
 import { api } from './api.js';
 
 interface Me {
