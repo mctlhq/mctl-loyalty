@@ -66,6 +66,14 @@ app.get(['/app', '/app/*', '/admin', '/admin/*', '/docs', '/docs/*'], (_req, res
   res.sendFile(resolve(PUBLIC_DIR, '_miniapp', 'index.html'));
 });
 
+// ---- legacy /help redirect ----
+// /help was a SPA docs route until it was collapsed into /docs. It now falls
+// through to the 404 page, breaking old bookmarks and shared links, so redirect
+// it permanently to /docs.
+app.get(['/help', '/help/*'], (_req, res) => {
+  res.redirect(301, '/docs');
+});
+
 // ---- catch-all ----
 // Unknown paths fall through to the landing's 404 page (or home if absent).
 app.use((req: Request, res: Response, next: NextFunction) => {
