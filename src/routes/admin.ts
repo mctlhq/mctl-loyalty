@@ -83,7 +83,14 @@ adminRouter.post('/rules', async (req, res, next) => {
   try {
     const ctx = getCtx(req);
     // Super-admin may target any scope: NULL = global, a number = that merchant.
-    const merchantId = req.body?.merchant_id != null ? Number.parseInt(String(req.body.merchant_id), 10) : null;
+    let merchantId: number | null = null;
+    if (req.body?.merchant_id != null) {
+      merchantId = Number.parseInt(String(req.body.merchant_id), 10);
+      if (!Number.isFinite(merchantId)) {
+        res.status(400).json({ error: 'invalid merchant_id' });
+        return;
+      }
+    }
     const { id } = await createRule(merchantId, {
       name: req.body?.name,
       kind: req.body?.kind,

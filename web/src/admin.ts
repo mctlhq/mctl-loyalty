@@ -288,7 +288,7 @@ async function loadRules(root: HTMLElement): Promise<void> {
             .map(
               (r) => `<div class="row">
         <div>${esc(r.name)} <span class="muted">+${r.point_value}${r.daily_limit != null ? ` · max ${r.daily_limit}/day` : ''}${r.active ? '' : ' · inactive'}</span></div>
-        <button data-rule-del="${r.id}">Remove</button>
+        <button data-rule-toggle="${r.id}" data-active="${r.active ? '1' : '0'}">${r.active ? 'Deactivate' : 'Activate'}</button>
       </div>`,
             )
             .join('')
@@ -297,14 +297,18 @@ async function loadRules(root: HTMLElement): Promise<void> {
     <fieldset><legend>Add rule</legend>
       <input id="ru-name" placeholder="e.g. Visit" />
       <input id="ru-points" placeholder="Points" inputmode="numeric" />
-      <input id="ru-limit" placeholder="Daily limit (empty = none)" inputmode="numeric" />
+      <input id="ru-limit" placeholder="Daily limit per customer" inputmode="numeric" />
       <button id="ru-add">Add</button>
     </fieldset>
   `;
-  el.querySelectorAll<HTMLButtonElement>('button[data-rule-del]').forEach((b) =>
+  // Toggle active instead of deleting: a hard delete would cascade-wipe the rule's
+  // accrual history and reset daily-limit counts, so the merchant route soft-deletes.
+  el.querySelectorAll<HTMLButtonElement>('button[data-rule-toggle]').forEach((b) =>
     b.addEventListener('click', async () => {
       try {
-        await api.del(`/merchants/${activeMerchant}/rules/${b.dataset.ruleDel}`);
+        await api.patch(`/merchants/${activeMerchant}/rules/${b.dataset.ruleToggle}`, {
+          active: b.dataset.active !== '1',
+        });
         await loadRules(root);
       } catch (err) {
         alertMsg((err as Error).message);
@@ -312,16 +316,34 @@ async function loadRules(root: HTMLElement): Promise<void> {
     }),
   );
   el.querySelector('#ru-add')?.addEventListener('click', async () => {
-    const name = (root.querySelector<HTMLInputElement>('#ru-name')!).value.trim();
-    const points = Number((root.querySelector<HTMLInputElement>('#ru-points')!).value.trim());
-    const limitRaw = (root.querySelector<HTMLInputElement>('#ru-limit')!).value.trim();
+    const nameEl = root.querySelector<HTMLInputElement>('#ru-name')!;
+    const pointsEl = root.querySelector<HTMLInputElement>('#ru-points')!;
+    const limitEl = root.querySelector<HTMLInputElement>('#ru-limit')!;
+    const name = nameEl.value.trim();
+    const points = Number.parseInt(pointsEl.value.trim(), 10);
+    const limit = Number.parseInt(limitEl.value.trim(), 10);
+    if (!name) {
+      alertMsg('Enter a rule name');
+      return;
+    }
+    if (!Number.isFinite(points) || points <= 0) {
+      alertMsg('Points must be a positive number');
+      return;
+    }
+    if (!Number.isFinite(limit) || limit <= 0) {
+      alertMsg('Daily limit per customer is required (a positive number)');
+      return;
+    }
     try {
       await api.post(`/merchants/${activeMerchant}/manage-rules`, {
         name,
         kind: 'fixed',
         point_value: points,
-        daily_limit: limitRaw === '' ? null : Number.parseInt(limitRaw, 10),
+        daily_limit: limit,
       });
+      nameEl.value = '';
+      pointsEl.value = '';
+      limitEl.value = '';
       await loadRules(root);
     } catch (err) {
       alertMsg((err as Error).message);

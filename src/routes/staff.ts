@@ -14,7 +14,7 @@ import {
   scanAndAccrue,
 } from '../services/ledger.js';
 import { addMember, listMembers, removeMember } from '../services/members.js';
-import { createRule, deleteRule, listMerchantRules, updateRule } from '../services/rules.js';
+import { createRule, deactivateRule, listMerchantRules, updateRule } from '../services/rules.js';
 
 export const staffRouter = Router();
 
@@ -170,6 +170,9 @@ staffRouter.patch('/merchants/:mid/rules/:rid', requireMember(['admin']), async 
   }
 });
 
+// Soft-delete (deactivate) only — merchant-admins must not hard-delete, which would
+// cascade-wipe the rule's accrual rows and reset daily-limit counts. Scoped to this
+// merchant's own rules; hard delete is reserved for super-admins (/admin/rules/:rid).
 staffRouter.delete('/merchants/:mid/rules/:rid', requireMember(['admin']), async (req, res, next) => {
   try {
     const ctx = getCtx(req);
@@ -179,8 +182,8 @@ staffRouter.delete('/merchants/:mid/rules/:rid', requireMember(['admin']), async
       res.status(400).json({ error: 'bad rule id' });
       return;
     }
-    await deleteRule(rid, mid); // scope: only this merchant's own rules
-    await audit(ctx.userId, 'rule.delete', { merchantId: mid, targetType: 'rule', targetId: rid });
+    await deactivateRule(rid, mid); // scope: only this merchant's own rules
+    await audit(ctx.userId, 'rule.deactivate', { merchantId: mid, targetType: 'rule', targetId: rid });
     res.json({ ok: true });
   } catch (err) {
     sendLedgerError(res, err, next);

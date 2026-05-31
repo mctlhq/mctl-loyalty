@@ -15,6 +15,12 @@ Bot: **@MCTL Rewards** (`@mctl_rewards_bot`). Current image: **0.8.0**.
 - **Earning**: a user shows a dynamic rotating QR (opaque one-time token, 60 s TTL,
   only the SHA-256 hash stored, burns on scan). Staff scan it and apply a fixed-value
   **accrual rule** → points credited. Daily limits enforced at the DB level.
+  Accrual rules are global (super-admin) or per-merchant (a merchant-admin manages
+  its own). `point_value` is capped (`MAX_POINT_VALUE`) and a merchant-scoped rule
+  must declare a `daily_limit` (per-customer/day, also capped) so a merchant-admin
+  cannot mint unbounded points; globals may omit the limit. Merchant-admins can only
+  deactivate their rules (soft-delete) — hard delete is super-admin only, since the
+  `accruals` FK cascade would otherwise reset daily-limit history.
 - **Redeeming (hold → capture)**: tapping a reward HOLDS the points immediately
   (`pending`, balance debited, stock decremented) and shows the user a **redemption QR**.
   Staff scan that QR ("Scan redemption") to **capture/fulfill** it. If the user cancels

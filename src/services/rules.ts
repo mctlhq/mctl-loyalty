@@ -25,8 +25,18 @@ export interface RuleInput {
 
 const KINDS = ['fixed', 'amount'] as const;
 
+// Bounds on accrual rules. point_value is capped for every rule (a fat-fingered
+// 999999999 would mint absurd balances), and merchant-scoped rules must declare a
+// daily_limit so a non-super-admin cannot create an unbounded-issuance rule.
+// Globals (super-admin only) may still omit the daily limit.
+const MAX_POINT_VALUE = 1_000_000;
+const MAX_DAILY_LIMIT = 100_000;
+
 /** Validate + normalise the mutable fields of an accrual rule. Throws LedgerError(400). */
-function normaliseInput(input: RuleInput): {
+function normaliseInput(
+  input: RuleInput,
+  opts: { requireDailyLimit?: boolean } = {},
+): {
   name: string;
   kind: string;
   pointValue: number;
@@ -40,9 +50,35 @@ function normaliseInput(input: RuleInput): {
   if (!KINDS.includes(kind as (typeof KINDS)[number])) {
     throw new LedgerError(400, 'invalid kind');
   }
-  const pointValue = Number.parseInt(String(input.point_value ?? '0'), 10) || 0;
-  const rate = input.rate != null ? Number(input.rate) : null;
-  const dailyLimit = input.daily_limit != null ? Number.parseInt(String(input.daily_limit), 10) : null;
+
+  const pointValue = Number.parseInt(String(input.point_value ?? ''), 10);
+  if (!Number.isFinite(pointValue) || pointValue <= 0) {
+    throw new LedgerError(400, 'point_value must be a positive integer');
+  }
+  if (pointValue > MAX_POINT_VALUE) {
+    throw new LedgerError(400, `point_value must not exceed ${MAX_POINT_VALUE}`);
+  }
+
+  let rate: number | null = null;
+  if (input.rate != null) {
+    rate = Number(input.rate);
+    if (!Number.isFinite(rate)) throw new LedgerError(400, 'rate must be a number');
+  }
+
+  let dailyLimit: number | null = null;
+  if (input.daily_limit != null && String(input.daily_limit).trim() !== '') {
+    dailyLimit = Number.parseInt(String(input.daily_limit), 10);
+    if (!Number.isFinite(dailyLimit) || dailyLimit <= 0) {
+      throw new LedgerError(400, 'daily_limit must be a positive integer');
+    }
+    if (dailyLimit > MAX_DAILY_LIMIT) {
+      throw new LedgerError(400, `daily_limit must not exceed ${MAX_DAILY_LIMIT}`);
+    }
+  }
+  if (opts.requireDailyLimit && dailyLimit == null) {
+    throw new LedgerError(400, 'daily_limit is required for a merchant rule');
+  }
+
   const active = input.active != null ? Boolean(input.active) : true;
   return { name, kind, pointValue, rate, dailyLimit, active };
 }
@@ -54,7 +90,7 @@ function normaliseInput(input: RuleInput): {
  * scope from request bodies.
  */
 export async function createRule(merchantId: number | null, input: RuleInput): Promise<{ id: number }> {
-  const r = normaliseInput(input);
+  const r = normaliseInput(input, { requireDailyLimit: merchantId != null });
   if (merchantId != null) {
     const merchant = await pool.query(`SELECT 1 FROM merchants WHERE id = $1`, [merchantId]);
     if (merchant.rowCount === 0) throw new LedgerError(404, 'merchant not found');
@@ -78,7 +114,7 @@ export async function updateRule(
   input: RuleInput,
   scopeMerchantId?: number,
 ): Promise<void> {
-  const r = normaliseInput(input);
+  const r = normaliseInput(input, { requireDailyLimit: scopeMerchantId !== undefined });
   const params: unknown[] = [r.name, r.kind, r.pointValue, r.rate, r.dailyLimit, r.active, ruleId];
   let where = `id = $7`;
   if (scopeMerchantId !== undefined) {
@@ -107,6 +143,29 @@ export async function deleteRule(ruleId: number, scopeMerchantId?: number): Prom
     params.push(scopeMerchantId);
   }
   const { rowCount } = await pool.query(`DELETE FROM accrual_rules WHERE ${where}`, params);
+  if (rowCount === 0) throw new LedgerError(404, 'rule not found');
+}
+
+/**
+ * Soft-delete: deactivate a rule (SET active = false) instead of removing the row.
+ * Used by the merchant-admin delete route so a merchant-admin cannot hard-delete a
+ * rule — `accruals.rule_id` is `ON DELETE CASCADE`, so a hard delete would wipe that
+ * rule's accrual rows and reset every user's daily-limit count (a delete-and-recreate
+ * cap bypass). Hard delete stays reserved for super-admins. Scoped exactly like
+ * updateRule/deleteRule: a non-undefined `scopeMerchantId` confines the change to
+ * that merchant's own rules.
+ */
+export async function deactivateRule(ruleId: number, scopeMerchantId?: number): Promise<void> {
+  const params: unknown[] = [ruleId];
+  let where = `id = $1`;
+  if (scopeMerchantId !== undefined) {
+    where += ` AND merchant_id = $2`;
+    params.push(scopeMerchantId);
+  }
+  const { rowCount } = await pool.query(
+    `UPDATE accrual_rules SET active = false WHERE ${where}`,
+    params,
+  );
   if (rowCount === 0) throw new LedgerError(404, 'rule not found');
 }
 
