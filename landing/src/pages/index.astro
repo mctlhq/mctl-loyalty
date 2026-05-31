@@ -1,137 +1,167 @@
 ---
 import Base from '../layouts/Base.astro';
+import PhoneFrame from '../components/PhoneFrame.astro';
+import AppMain from '../components/app/AppMain.astro';
+import AppRewards from '../components/app/AppRewards.astro';
+import AppEarned from '../components/app/AppEarned.astro';
+import SuperAdminPanel from '../components/admin/SuperAdminPanel.astro';
+import MerchantPanel from '../components/admin/MerchantPanel.astro';
 
 const TG_APP = 'https://t.me/mctl_rewards_bot/app';
 const title = 'MCTL Rewards — Community loyalty in Telegram';
 const description =
-  'A Telegram Mini App that turns your community into a loyalty program. Earn points by showing your QR at member shops, then redeem them for rewards.';
+  'A Telegram Mini App that turns your community into a loyalty program. One shared points balance across every shop, cafe and event — earned and redeemed in a tap.';
 ---
 
 <Base title={title} description={description} path="/">
-  <!-- Hero -->
-  <header class="hero">
-    <div class="container">
-      <p class="eyebrow">Telegram Mini App</p>
-      <h1>Community loyalty in Telegram</h1>
-      <p class="sub">
-        One shared points balance across every shop, cafe, and event in your
-        community. Show your QR to earn, redeem it for rewards — all without
-        leaving Telegram.
+  <div class="wrap">
+    <nav class="nav">
+      <div class="brand"><span class="logo">M</span>MCTL Rewards</div>
+      <div class="navlinks">
+        <a href="#how">How it works</a>
+        <a href="#ops">Merchants</a>
+        <a class="btn sm" href={TG_APP}>Open app <span class="arrow">→</span></a>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <div class="eyebrow">Telegram Mini App</div>
+      <h1>Community loyalty,<br />built into <em>Telegram</em></h1>
+      <div class="herorow">
+        <p>
+          One shared points balance across every shop, café and event in your
+          community — earned and redeemed in a tap.
+        </p>
+        <div class="heroctas">
+          <a class="btn" href={TG_APP}>Open in Telegram <span class="arrow">→</span></a>
+          <a class="btn line" href="#how">How it works</a>
+        </div>
+      </div>
+    </header>
+  </div>
+
+  <div class="wrap">
+    <div class="rule"></div>
+    <div class="strip">
+      <div><b>No plastic cards</b><p>Your QR lives in the Mini App and rotates every minute.</p></div>
+      <div><b>One shared wallet</b><p>The same points everywhere members spend, no fragmentation.</p></div>
+      <div><b>Single-use codes</b><p>Each QR burns after one scan, so it can’t be reused.</p></div>
+    </div>
+    <div class="rule"></div>
+  </div>
+
+  <div class="wrap">
+    <section id="how">
+      <div class="lbl">How it works</div>
+      <h2 class="h2">Earn, then redeem — in three moves</h2>
+      <div class="steps">
+        <div class="step">
+          <div class="idx">01</div>
+          <h3>Earn at the counter</h3>
+          <p>
+            Staff tap <b>Scan&nbsp;to&nbsp;award</b> and scan your QR. An accrual
+            rule — Visit&nbsp;+50, Purchase&nbsp;+20 — credits the points, and the
+            bot confirms it in your chat.
+          </p>
+        </div>
+        <div class="step">
+          <div class="idx">02</div>
+          <h3>Reserve a reward</h3>
+          <p>
+            Browse the catalog and reserve one. The app issues a single-use
+            redemption QR that burns after one scan, so it can’t be reused.
+          </p>
+        </div>
+        <div class="step">
+          <div class="idx">03</div>
+          <h3>Redeem &amp; deduct</h3>
+          <p>
+            Staff tap <b>Scan&nbsp;redemption</b> and confirm. Points are deducted
+            only at that moment, and the reward’s stock ticks down.
+          </p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="wrap">
+    <div class="rule"></div>
+    <section id="ops">
+      <div class="lbl">For merchants &amp; admins</div>
+      <h2 class="h2">Run the whole program<br />from inside Telegram</h2>
+      <p class="opslead">
+        No dashboard, no separate app. Super-admins shape the program; merchant
+        staff work the counter — every interface lives in the same Mini App.
       </p>
-      <div class="hero-cta">
-        <a class="btn" href={TG_APP}>Open in Telegram</a>
-        <a class="btn btn-ghost" href="#how">How it works</a>
-      </div>
-    </div>
-  </header>
-
-  <!-- How it works -->
-  <section class="block" id="how">
-    <div class="container">
-      <h2>How it works</h2>
-      <p class="lead">Three steps, no app install, no plastic cards.</p>
-      <div class="grid">
-        <div class="feature">
-          <span class="num">1</span>
-          <h3>Show your QR</h3>
-          <p>
-            Open the Mini App and show your personal QR code. It rotates every
-            minute and burns after a single scan, so it can't be reused.
-          </p>
-        </div>
-        <div class="feature">
-          <span class="num">2</span>
-          <h3>Staff scans it</h3>
-          <p>
-            A member merchant scans your code at checkout and points land in
-            your balance instantly, following that merchant's accrual rule.
-          </p>
-        </div>
-        <div class="feature">
-          <span class="num">3</span>
-          <h3>Redeem rewards</h3>
-          <p>
-            Browse the rewards catalog, reserve a reward, and present a
-            one-time redemption QR for staff to confirm. Points are deducted
-            only when it's claimed.
-          </p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- For communities / merchants -->
-  <section class="block">
-    <div class="container">
-      <h2>Built for communities and merchants</h2>
-      <p class="lead">
-        One program, many places to earn and spend — managed from inside
-        Telegram.
-      </p>
-      <div class="cols">
-        <div class="feature">
-          <h3>For communities</h3>
-          <p>
-            Launch a single, shared points currency that works across every
-            participating venue. No separate apps per merchant, no fragmented
-            balances — members carry one wallet everywhere.
-          </p>
-        </div>
-        <div class="feature">
-          <h3>For merchants</h3>
-          <p>
-            Add your shop, invite staff as admins or scanners, and set your own
-            accrual rules and rewards. Scanning a member's QR takes seconds and
-            every transaction is logged.
-          </p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Screenshots / mockups -->
-  <section class="block">
-    <div class="container">
-      <h2>See it in action</h2>
-      <p class="lead">A clean, native-feeling experience inside Telegram.</p>
-      <div class="shots">
-        <figure class="device">
-          <img
-            src="/screenshots/app-profile.png"
-            alt="MCTL Rewards Mini App: points balance, rotating QR and rewards catalog"
-            width="576"
-            height="1280"
-            loading="lazy"
-            decoding="async"
-          />
+      <div class="opsphones">
+        <figure>
+          <PhoneFrame w={268}><SuperAdminPanel /></PhoneFrame>
+          <figcaption>Super-admin · program setup</figcaption>
         </figure>
-        <ul class="shots-points">
-          <li><b>Rotating QR</b> — staff scan it to credit your points.</li>
-          <li><b>One balance</b> across the whole community — earn and spend it anywhere.</li>
-          <li><b>Rewards catalog</b> — redeem with a one-tap confirmation QR.</li>
-        </ul>
+        <figure>
+          <PhoneFrame w={268}><MerchantPanel /></PhoneFrame>
+          <figcaption>Merchant · the counter</figcaption>
+        </figure>
       </div>
-    </div>
-  </section>
+      <div class="opsgrid">
+        <div>
+          <div class="tagline">Super-admin</div>
+          <h3>Shape the program</h3>
+          <ul class="caps">
+            <li><b>Add merchants</b> — shops, cafés and venues, each with its own staff</li>
+            <li><b>Create global accrual rules</b> like Visit&nbsp;+50 or Purchase&nbsp;+20, with optional daily limits</li>
+            <li><b>Publish rewards</b> with a points cost and optional stock</li>
+          </ul>
+        </div>
+        <div>
+          <div class="tagline">Merchant staff</div>
+          <h3>Work the counter</h3>
+          <ul class="caps">
+            <li><b>Scan to award</b> points and <b>Scan redemption</b> to fulfil them</li>
+            <li><b>Track redemption requests</b> as members claim their rewards</li>
+            <li><b>Invite staff</b> as scanner or admin by Telegram ID</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+    <div class="rule"></div>
+  </div>
 
-  <!-- Final CTA -->
-  <section class="cta-band">
-    <div class="container">
-      <h2>Ready to start earning?</h2>
-      <p class="lead">Open the Mini App and show your first QR in seconds.</p>
-      <a class="btn" href={TG_APP}>Open in Telegram</a>
-    </div>
-  </section>
+  <div class="wrap">
+    <section class="showcase">
+      <div class="lbl">See it in action</div>
+      <h2 class="h2">Quietly native to Telegram</h2>
+      <div class="phones">
+        <figure>
+          <PhoneFrame w={224}><AppRewards /></PhoneFrame>
+          <figcaption>Rewards catalog</figcaption>
+        </figure>
+        <figure>
+          <PhoneFrame w={256}><AppMain /></PhoneFrame>
+          <figcaption>Your rotating QR</figcaption>
+        </figure>
+        <figure>
+          <PhoneFrame w={224}><AppEarned /></PhoneFrame>
+          <figcaption>Points &amp; history</figcaption>
+        </figure>
+      </div>
+    </section>
+  </div>
 
-  <!-- Footer -->
-  <footer>
-    <div class="container row">
+  <div class="wrap">
+    <div class="rule"></div>
+    <section class="cta">
+      <h2>Show your first QR<br />in seconds.</h2>
+      <p>Open the Mini App — no install, no card, no friction.</p>
+      <a class="btn" href={TG_APP}>Open in Telegram <span class="arrow">→</span></a>
+    </section>
+    <footer class="foot">
       <span>© 2026 MCTL Rewards</span>
-      <nav>
+      <span>
         <a href="/privacy">Privacy</a>
         <a href="/terms">Terms</a>
         <a href={TG_APP}>Open app</a>
-      </nav>
-    </div>
-  </footer>
+      </span>
+    </footer>
+  </div>
 </Base>

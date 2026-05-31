@@ -1,0 +1,17 @@
+---
+// Dark phone bezel wrapping a product-mockup screen. Width is the only knob;
+// height/radii/padding/notch all scale from it (same ratios as the design
+// prototype's PhoneFrame). The screen content goes in the default slot.
+interface Props {
+  w?: number;
+}
+const { w = 256 } = Astro.props;
+const h = Math.round(w * 2.08);
+---
+
+<div class="mck-phone" style={`--w:${w}px;--h:${h}px;`} aria-hidden="true">
+  <div class="mck-screen">
+    <span class="mck-notch"></span>
+    <slot />
+  </div>
+</div>
