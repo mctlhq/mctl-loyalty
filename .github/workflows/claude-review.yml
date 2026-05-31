@@ -1,0 +1,163 @@
+name: Claude PR review
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions: {}
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 1
+
+      - name: Classify PR complexity and pick model
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR=${{ github.event.pull_request.number || github.event.issue.number }}
+          files=$(gh pr view "$PR" --repo ${{ github.repository }} \
+            --json files --jq '[.files[].path] | join("\n")')
+          lines=$(gh pr diff "$PR" --repo ${{ github.repository }} 2>/dev/null \
+            | grep -c '^[+-][^+-]' || echo 0)
+          score=1
+          while IFS= read -r f; do
+            # Money/auth-sensitive backend → top tier (ledger, routes, schema, auth).
+            if echo "$f" | grep -qE '^src/(services|routes|db|middleware|telegram|qr)/'; then
+              score=3; break
+            # Any other non-test TypeScript → mid tier.
+            elif echo "$f" | grep -qE '\.ts$' && ! echo "$f" | grep -qE '\.(test|spec)\.ts$'; then
+              [ $score -lt 2 ] && score=2
+            fi
+          done <<< "$files"
+          if [ "$lines" -gt 400 ] && [ $score -lt 3 ]; then
+            score=$((score + 1))
+          fi
+          case $score in
+            3) model="claude-opus-4-7" ;;
+            2) model="claude-sonnet-4-6" ;;
+            *) model="claude-haiku-4-5-20251001" ;;
+          esac
+          echo "model=$model" >> $GITHUB_OUTPUT
+          echo "score=$score" >> $GITHUB_OUTPUT
+          echo "lines=$lines" >> $GITHUB_OUTPUT
+          echo "PR #$PR: model=$model score=$score lines=$lines"
+
+      - name: Check fallback token availability
+        id: token-check
+        run: |
+          if [ -n "$TOKEN2" ]; then
+            echo "has_fallback=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_fallback=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          TOKEN2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
+
+      - name: Claude review
+        id: review
+        continue-on-error: true
+        uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are the automated code reviewer for this pull request. Review
+            the PR diff thoroughly.
+
+            Focus on:
+            - Correctness and logic errors; edge cases the change misses.
+            - Money/ledger integrity: every balance or stock mutation must be a
+              single DB transaction with the right row locks; no double-spend,
+              no lost holds, no negative balance.
+            - Security: SQL injection, authentication/authorization, Telegram
+              initData validation, secret handling, unsafe input.
+            - Concurrency: races between scans/redeems/sweeper, deadlocks,
+              lock-ordering, missing FOR UPDATE.
+            - Error handling: ignored promise rejections, missing await,
+              swallowed errors, unhandled paths.
+            - Test coverage: behaviour changed without a corresponding test.
+
+            Follow the conventions in this repository's CLAUDE.md (TypeScript /
+            Node style, conventional commits, English only, no emoji).
+
+            If the diff is trivial — only config/values YAML (hostname, env
+            var, image tag, resource limits, replica count), a dependency bump
+            with no logic change, docs/comments, or a one-line typo — post a
+            single short top-level approval comment and nothing else.
+
+            Otherwise, post each finding as an inline comment using the
+            mcp__github_inline_comment__create_inline_comment tool, prefixed
+            with a severity tag:
+            - P1 — must fix before merge (bug, security hole, data loss).
+            - P2 — should fix before merge (likely bug, missing test, unsafe
+              pattern).
+            - P3 — nice to have (style, minor nit); does not block merge.
+
+            Finish with a top-level summary comment: the count of P1/P2/P3
+            findings and an explicit verdict — "No P1/P2 findings, good to
+            merge" or "Has P1/P2 findings, changes requested". Be concise; do
+            not restate the diff.
+          claude_args: '--model ${{ steps.classify.outputs.model }} --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"'
+
+      - name: Claude review (fallback token)
+        if: steps.review.outcome == 'failure' && steps.token-check.outputs.has_fallback == 'true'
+        uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
+          track_progress: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are the automated code reviewer for this pull request. Review
+            the PR diff thoroughly.
+
+            Focus on:
+            - Correctness and logic errors; edge cases the change misses.
+            - Money/ledger integrity: every balance or stock mutation must be a
+              single DB transaction with the right row locks; no double-spend,
+              no lost holds, no negative balance.
+            - Security: SQL injection, authentication/authorization, Telegram
+              initData validation, secret handling, unsafe input.
+            - Concurrency: races between scans/redeems/sweeper, deadlocks,
+              lock-ordering, missing FOR UPDATE.
+            - Error handling: ignored promise rejections, missing await,
+              swallowed errors, unhandled paths.
+            - Test coverage: behaviour changed without a corresponding test.
+
+            Follow the conventions in this repository's CLAUDE.md (TypeScript /
+            Node style, conventional commits, English only, no emoji).
+
+            If the diff is trivial — only config/values YAML (hostname, env
+            var, image tag, resource limits, replica count), a dependency bump
+            with no logic change, docs/comments, or a one-line typo — post a
+            single short top-level approval comment and nothing else.
+
+            Otherwise, post each finding as an inline comment using the
+            mcp__github_inline_comment__create_inline_comment tool, prefixed
+            with a severity tag:
+            - P1 — must fix before merge (bug, security hole, data loss).
+            - P2 — should fix before merge (likely bug, missing test, unsafe
+              pattern).
+            - P3 — nice to have (style, minor nit); does not block merge.
+
+            Finish with a top-level summary comment: the count of P1/P2/P3
+            findings and an explicit verdict — "No P1/P2 findings, good to
+            merge" or "Has P1/P2 findings, changes requested". Be concise; do
+            not restate the diff.
+          claude_args: '--model ${{ steps.classify.outputs.model }} --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"'
