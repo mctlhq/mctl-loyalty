@@ -1,4 +1,4 @@
-import { pool } from '../db/pool.js';
+import { pool, withTransaction } from '../db/pool.js';
 import { LedgerError } from './ledger.js';
 
 export interface AccrualRule {
@@ -23,7 +23,11 @@ export interface RuleInput {
   active?: boolean;
 }
 
-const KINDS = ['fixed', 'amount'] as const;
+// Only 'fixed' is supported end-to-end: scanAndAccrue rejects any non-fixed rule
+// (after burning the customer's one-time QR token), so an 'amount' rule would be an
+// unusable footgun. Keep this allowlist to 'fixed' until amount-based accrual is
+// actually implemented in the ledger.
+const KINDS = ['fixed'] as const;
 
 // Bounds on accrual rules. point_value is capped for every rule (a fat-fingered
 // 999999999 would mint absurd balances), and merchant-scoped rules must declare a
@@ -104,56 +108,70 @@ export async function createRule(merchantId: number | null, input: RuleInput): P
 }
 
 /**
- * Update an accrual rule. `scopeMerchantId`, when provided, constrains the WHERE
- * clause to `merchant_id = scopeMerchantId` so a merchant-admin can physically
- * only touch their own rules (never globals or another merchant's). Pass
- * `undefined` for an unscoped super-admin update of any rule (including globals).
+ * Update an accrual rule with PATCH semantics: only the fields actually supplied
+ * (not `undefined`) override the existing row; the rest are preserved. This lets a
+ * partial body such as `{ active: false }` work without re-sending name/points. The
+ * existing row is locked `FOR UPDATE`, merged, then the MERGED result is validated
+ * (so bounds/required-daily-limit still apply to the final values).
+ *
+ * `scopeMerchantId`, when provided, constrains the lookup to `merchant_id =
+ * scopeMerchantId` so a merchant-admin can physically only touch their own rules
+ * (never globals or another merchant's). Pass `undefined` for an unscoped
+ * super-admin update of any rule (including globals).
  */
 export async function updateRule(
   ruleId: number,
   input: RuleInput,
   scopeMerchantId?: number,
 ): Promise<void> {
-  const r = normaliseInput(input, { requireDailyLimit: scopeMerchantId !== undefined });
-  const params: unknown[] = [r.name, r.kind, r.pointValue, r.rate, r.dailyLimit, r.active, ruleId];
-  let where = `id = $7`;
-  if (scopeMerchantId !== undefined) {
-    where += ` AND merchant_id = $8`;
-    params.push(scopeMerchantId);
-  }
-  const { rowCount } = await pool.query(
-    `UPDATE accrual_rules
-        SET name = $1, kind = $2, point_value = $3, rate = $4, daily_limit = $5, active = $6
-      WHERE ${where}`,
-    params,
-  );
-  if (rowCount === 0) throw new LedgerError(404, 'rule not found');
-}
+  await withTransaction(async (client) => {
+    const lookup: unknown[] = [ruleId];
+    let where = `id = $1`;
+    if (scopeMerchantId !== undefined) {
+      where += ` AND merchant_id = $2`;
+      lookup.push(scopeMerchantId);
+    }
+    const existing = await client.query<{
+      name: string;
+      kind: string;
+      point_value: number;
+      rate: number | null;
+      daily_limit: number | null;
+      active: boolean;
+    }>(
+      `SELECT name, kind, point_value, rate, daily_limit, active
+         FROM accrual_rules WHERE ${where} FOR UPDATE`,
+      lookup,
+    );
+    if (existing.rowCount === 0) throw new LedgerError(404, 'rule not found');
+    const cur = existing.rows[0]!;
 
-/**
- * Delete an accrual rule. `scopeMerchantId`, when provided, constrains the WHERE
- * clause to that merchant's own rules; `undefined` lets a super-admin delete any
- * rule (including globals).
- */
-export async function deleteRule(ruleId: number, scopeMerchantId?: number): Promise<void> {
-  const params: unknown[] = [ruleId];
-  let where = `id = $1`;
-  if (scopeMerchantId !== undefined) {
-    where += ` AND merchant_id = $2`;
-    params.push(scopeMerchantId);
-  }
-  const { rowCount } = await pool.query(`DELETE FROM accrual_rules WHERE ${where}`, params);
-  if (rowCount === 0) throw new LedgerError(404, 'rule not found');
+    const merged: RuleInput = {
+      name: input.name !== undefined ? input.name : cur.name,
+      kind: input.kind !== undefined ? input.kind : cur.kind,
+      point_value: input.point_value !== undefined ? input.point_value : cur.point_value,
+      rate: input.rate !== undefined ? input.rate : cur.rate,
+      daily_limit: input.daily_limit !== undefined ? input.daily_limit : cur.daily_limit,
+      active: input.active !== undefined ? input.active : cur.active,
+    };
+    const r = normaliseInput(merged, { requireDailyLimit: scopeMerchantId !== undefined });
+    await client.query(
+      `UPDATE accrual_rules
+          SET name = $1, kind = $2, point_value = $3, rate = $4, daily_limit = $5, active = $6
+        WHERE id = $7`,
+      [r.name, r.kind, r.pointValue, r.rate, r.dailyLimit, r.active, ruleId],
+    );
+  });
 }
 
 /**
  * Soft-delete: deactivate a rule (SET active = false) instead of removing the row.
- * Used by the merchant-admin delete route so a merchant-admin cannot hard-delete a
- * rule — `accruals.rule_id` is `ON DELETE CASCADE`, so a hard delete would wipe that
- * rule's accrual rows and reset every user's daily-limit count (a delete-and-recreate
- * cap bypass). Hard delete stays reserved for super-admins. Scoped exactly like
- * updateRule/deleteRule: a non-undefined `scopeMerchantId` confines the change to
- * that merchant's own rules.
+ * Both the merchant and super-admin delete routes use this — never a physical
+ * DELETE: `accruals.rule_id` is `ON DELETE CASCADE` and `transactions.rule_id` is
+ * `ON DELETE SET NULL`, so a hard delete would wipe a rule's accrual rows (resetting
+ * daily-limit counts — a delete-and-recreate cap bypass) and detach its history.
+ * `scopeMerchantId`, when provided, confines the change to that merchant's own rules
+ * (merchant-admin); `undefined` lets a super-admin deactivate any rule.
  */
 export async function deactivateRule(ruleId: number, scopeMerchantId?: number): Promise<void> {
   const params: unknown[] = [ruleId];

@@ -383,7 +383,8 @@ function superAdminPanels(ms: Merchant[]): string {
 }
 
 // Cross-merchant rule list for super-admins: every merchant's own rules + globals,
-// labeled with the owning merchant. Super-admins can delete any rule here.
+// labeled with the owning merchant. Super-admins can activate/deactivate any rule
+// here (rules are deactivated, never hard-deleted, to preserve accrual history).
 async function loadAllRules(root: HTMLElement): Promise<void> {
   const el = root.querySelector<HTMLElement>('#all-rules');
   if (!el) return;
@@ -400,15 +401,15 @@ async function loadAllRules(root: HTMLElement): Promise<void> {
           (r) => `<div class="row">
         <div>${esc(r.name)} <span class="muted">+${r.point_value}${r.daily_limit != null ? ` · max ${r.daily_limit}/day` : ''}${r.active ? '' : ' · inactive'}</span>
           <div class="muted">${r.merchant_id == null ? 'Global' : esc(r.merchant_name ?? 'merchant ' + r.merchant_id)}</div></div>
-        <button data-all-rule-del="${r.id}">Remove</button>
+        <button data-all-rule-toggle="${r.id}" data-active="${r.active ? '1' : '0'}">${r.active ? 'Deactivate' : 'Activate'}</button>
       </div>`,
         )
         .join('')
     : '<div class="muted">No rules</div>';
-  el.querySelectorAll<HTMLButtonElement>('button[data-all-rule-del]').forEach((b) =>
+  el.querySelectorAll<HTMLButtonElement>('button[data-all-rule-toggle]').forEach((b) =>
     b.addEventListener('click', async () => {
       try {
-        await api.del(`/admin/rules/${b.dataset.allRuleDel}`);
+        await api.patch(`/admin/rules/${b.dataset.allRuleToggle}`, { active: b.dataset.active !== '1' });
         await loadAllRules(root);
       } catch (err) {
         alertMsg((err as Error).message);

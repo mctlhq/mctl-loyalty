@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { pool } from '../db/pool.js';
 import { getCtx, requireSuperAdmin } from '../middleware/auth.js';
-import { audit, LedgerError } from '../services/ledger.js';
+import { audit } from '../services/ledger.js';
 import { addMember } from '../services/members.js';
-import { createRule, deleteRule, listAllRules, updateRule } from '../services/rules.js';
+import { createRule, deactivateRule, listAllRules, updateRule } from '../services/rules.js';
+import { sendLedgerError } from '../middleware/errors.js';
 
 export const adminRouter = Router();
 
@@ -60,11 +61,7 @@ adminRouter.post('/merchants/:mid/members', async (req, res, next) => {
     await audit(ctx.userId, 'member.upsert', { merchantId: mid, targetType: 'user', targetId: member.user_id, meta: { telegram_id: telegramId, role } });
     res.json({ ok: true, merchant_id: mid, telegram_id: telegramId, role });
   } catch (err) {
-    if (err instanceof LedgerError) {
-      res.status(err.status).json({ error: err.message });
-      return;
-    }
-    next(err);
+    sendLedgerError(res, err, next);
   }
 });
 
@@ -102,11 +99,7 @@ adminRouter.post('/rules', async (req, res, next) => {
     await audit(ctx.userId, 'rule.create', { merchantId, targetType: 'rule', targetId: id, meta: { name: req.body?.name } });
     res.json({ id });
   } catch (err) {
-    if (err instanceof LedgerError) {
-      res.status(err.status).json({ error: err.message });
-      return;
-    }
-    next(err);
+    sendLedgerError(res, err, next);
   }
 });
 
@@ -130,14 +123,13 @@ adminRouter.patch('/rules/:rid', async (req, res, next) => {
     await audit(ctx.userId, 'rule.update', { targetType: 'rule', targetId: rid });
     res.json({ ok: true });
   } catch (err) {
-    if (err instanceof LedgerError) {
-      res.status(err.status).json({ error: err.message });
-      return;
-    }
-    next(err);
+    sendLedgerError(res, err, next);
   }
 });
 
+// Soft-delete (deactivate). A hard delete would cascade-wipe accruals.rule_id and
+// detach transactions.rule_id, destroying daily-limit/history data — so even
+// super-admins deactivate rather than physically remove rules.
 adminRouter.delete('/rules/:rid', async (req, res, next) => {
   try {
     const ctx = getCtx(req);
@@ -146,15 +138,11 @@ adminRouter.delete('/rules/:rid', async (req, res, next) => {
       res.status(400).json({ error: 'bad rule id' });
       return;
     }
-    await deleteRule(rid);
-    await audit(ctx.userId, 'rule.delete', { targetType: 'rule', targetId: rid });
+    await deactivateRule(rid);
+    await audit(ctx.userId, 'rule.deactivate', { targetType: 'rule', targetId: rid });
     res.json({ ok: true });
   } catch (err) {
-    if (err instanceof LedgerError) {
-      res.status(err.status).json({ error: err.message });
-      return;
-    }
-    next(err);
+    sendLedgerError(res, err, next);
   }
 });
 

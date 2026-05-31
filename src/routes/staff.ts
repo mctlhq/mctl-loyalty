@@ -9,12 +9,12 @@ import {
   cancelByStaff,
   fulfillByClaim,
   fulfillRedemption,
-  LedgerError,
   reverseTransaction,
   scanAndAccrue,
 } from '../services/ledger.js';
 import { addMember, listMembers, removeMember } from '../services/members.js';
 import { createRule, deactivateRule, listMerchantRules, updateRule } from '../services/rules.js';
+import { sendLedgerError } from '../middleware/errors.js';
 
 export const staffRouter = Router();
 
@@ -55,14 +55,6 @@ async function requireAnyAdmin(req: Request, res: Response, next: NextFunction):
   } catch (err) {
     next(err);
   }
-}
-
-function sendLedgerError(res: Response, err: unknown, next: NextFunction): void {
-  if (err instanceof LedgerError) {
-    res.status(err.status).json({ error: err.message });
-    return;
-  }
-  next(err);
 }
 
 // Merchants where the caller is staff (super-admins see all active merchants).
@@ -170,9 +162,8 @@ staffRouter.patch('/merchants/:mid/rules/:rid', requireMember(['admin']), async 
   }
 });
 
-// Soft-delete (deactivate) only — merchant-admins must not hard-delete, which would
-// cascade-wipe the rule's accrual rows and reset daily-limit counts. Scoped to this
-// merchant's own rules; hard delete is reserved for super-admins (/admin/rules/:rid).
+// Soft-delete (deactivate), scoped to this merchant's own rules. No route hard-deletes
+// rules — a physical delete would cascade-wipe accrual rows and reset daily-limit counts.
 staffRouter.delete('/merchants/:mid/rules/:rid', requireMember(['admin']), async (req, res, next) => {
   try {
     const ctx = getCtx(req);
