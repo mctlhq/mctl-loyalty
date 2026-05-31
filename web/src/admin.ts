@@ -47,7 +47,7 @@ export async function renderAdmin(root: HTMLElement): Promise<void> {
   merchants = (await api.get<{ merchants: Merchant[] }>('/staff/merchants')).merchants;
 
   if (!merchants.length && !isSuper) {
-    root.innerHTML = '<div class="card">You have no merchant access.</div><a class="link" href="/help">Help &amp; guide</a>';
+    root.innerHTML = '<div class="card">You have no merchant access.</div><a class="link" href="/docs">Help &amp; guide</a>';
     return;
   }
   // Deep-link preselect: if the caller opened a merchant Direct Link and is staff
@@ -72,7 +72,7 @@ export async function renderAdmin(root: HTMLElement): Promise<void> {
     <div class="card" id="staff-card"><h3>Staff</h3><div id="staff">Loading…</div></div>
     ${isSuper ? superAdminPanels(merchants) : ''}
     <a class="link" href="/app">← My profile</a>
-    <a class="link" href="/help">Help &amp; guide</a>
+    <a class="link" href="/docs">Help &amp; guide</a>
   `;
 
   const select = root.querySelector<HTMLSelectElement>('#merchant')!;

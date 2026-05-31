@@ -58,10 +58,11 @@ app.use('/api', api);
 app.use(express.static(PUBLIC_DIR));
 
 // ---- Mini App SPA fallback ----
-// Client-routed paths (/app, /admin, /help, /docs) are not real files, so map
-// them to the SPA's index.html. The root `/` is intentionally NOT here — it is
-// the Astro landing served by express.static above.
-app.get(['/app', '/app/*', '/admin', '/admin/*', '/help', '/help/*', '/docs', '/docs/*'], (_req, res) => {
+// Client-routed paths (/app, /admin, /docs) are not real files, so map them to
+// the SPA's index.html. `/docs` is the single docs route (it was also /help —
+// collapsed). The root `/` is intentionally NOT here — it is the Astro landing
+// served by express.static above.
+app.get(['/app', '/app/*', '/admin', '/admin/*', '/docs', '/docs/*'], (_req, res) => {
   res.sendFile(resolve(PUBLIC_DIR, '_miniapp', 'index.html'));
 });
 
