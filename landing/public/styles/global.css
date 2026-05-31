@@ -193,65 +193,73 @@ section.block .lead {
   }
 }
 
-/* ---- screenshots placeholder ---- */
+/* ---- screenshots ---- */
 .shots {
   display: grid;
-  gap: 20px;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: auto 1fr;
+  gap: 48px;
+  align-items: center;
+  margin-top: 32px;
 }
 
 @media (max-width: 760px) {
   .shots {
     grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 28px;
   }
 }
 
-.phone {
-  aspect-ratio: 9 / 17;
-  border-radius: 26px;
+/* Real device frame wrapping the app screenshot. The screenshot already has
+   its own status bar, so no fake notch — just a thin bezel, rounded corners
+   and a soft shadow. */
+.device {
+  margin: 0;
+  width: 280px;
+  max-width: 80vw;
+  padding: 8px;
+  border-radius: 36px;
   border: 1px solid var(--border);
   background: linear-gradient(160deg, #1b2330, #12161d);
-  position: relative;
-  overflow: hidden;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45);
 }
 
-.phone::before {
+.device img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 28px;
+}
+
+.shots-points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 18px;
+  max-width: 420px;
+}
+
+.shots-points li {
+  position: relative;
+  padding-left: 28px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.shots-points li::before {
   content: '';
   position: absolute;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 80px;
-  height: 6px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.phone .qr {
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 120px;
-  height: 120px;
-  border-radius: 12px;
-  background-image: linear-gradient(45deg, #fff 25%, transparent 25%),
-    linear-gradient(-45deg, #fff 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #fff 75%),
-    linear-gradient(-45deg, transparent 75%, #fff 75%);
-  background-size: 20px 20px;
-  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
-  background-color: #cdd2da;
-}
-
-.phone .label {
-  position: absolute;
   left: 0;
-  right: 0;
-  bottom: 22px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 13px;
+  top: 7px;
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--accent);
+}
+
+.shots-points b {
+  color: var(--text);
 }
 
 /* ---- final CTA ---- */
