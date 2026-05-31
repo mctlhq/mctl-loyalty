@@ -48,7 +48,10 @@ async function route(): Promise<void> {
       await renderUser(root);
     }
   } catch (err) {
-    root.innerHTML = `<div class="card error">Error: ${(err as Error).message}</div>`;
+    // Use textContent, not innerHTML interpolation, so an error message can
+    // never inject markup.
+    root.innerHTML = '<div class="card error"></div>';
+    root.firstElementChild!.textContent = `Error: ${(err as Error).message}`;
   }
 }
 
