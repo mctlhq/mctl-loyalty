@@ -30,10 +30,10 @@ async function lockWallet(client: PoolClient, userId: number): Promise<WalletRow
   return w;
 }
 
-/** Stable 63-bit advisory-lock key for a (user, rule) pair. */
-function accrualLockKey(userId: number, ruleId: number): bigint {
+/** Stable 63-bit advisory-lock key for a (user, merchant) daily-accrual pair. */
+function accrualLockKey(userId: number, merchantId: number): bigint {
   // Combine into a single bigint; the modulo keeps it inside int8 range.
-  return (BigInt(userId) * 1_000_003n + BigInt(ruleId)) % 9_223_372_036_854_775_783n;
+  return (BigInt(userId) * 1_000_003n + BigInt(merchantId)) % 9_223_372_036_854_775_783n;
 }
 
 export interface ScanResult {
@@ -84,19 +84,25 @@ export async function scanAndAccrue(params: {
     const delta = rule.point_value;
     if (delta <= 0) throw new LedgerError(400, 'rule has no positive value');
 
-    // 3. Serialize same (user,rule) accruals, then enforce the daily limit.
+    // 3. Serialize accruals for this (user, merchant) and enforce the daily limit
+    // ACROSS ALL of the merchant's rules. rule_id is deliberately NOT part of the
+    // count/lock: otherwise a merchant-admin could rotate rule_ids (create another
+    // rule) to reset a per-rule counter and mint the shared global currency without
+    // bound. The advisory lock serialises concurrent scans for this (user, merchant)
+    // so the count→insert below is race-free within the transaction.
     await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [
-      accrualLockKey(targetUserId, rule.id).toString(),
+      accrualLockKey(targetUserId, params.merchantId).toString(),
     ]);
     if (rule.daily_limit !== null) {
       const { rows } = await client.query<{ n: number }>(
         `SELECT count(*)::int AS n
-           FROM accruals
-          WHERE user_id = $1 AND rule_id = $2 AND accrual_date = current_date`,
-        [targetUserId, rule.id],
+           FROM accruals a
+           JOIN transactions t ON t.id = a.transaction_id
+          WHERE a.user_id = $1 AND t.merchant_id = $2 AND a.accrual_date = current_date`,
+        [targetUserId, params.merchantId],
       );
       if ((rows[0]?.n ?? 0) >= rule.daily_limit) {
-        throw new LedgerError(429, 'daily limit reached for this rule');
+        throw new LedgerError(429, 'daily accrual limit reached for this customer at this merchant');
       }
     }
 
@@ -115,6 +121,19 @@ export async function scanAndAccrue(params: {
       `INSERT INTO accruals (user_id, rule_id, accrual_date, transaction_id)
        VALUES ($1, $2, current_date, $3)`,
       [targetUserId, rule.id, txn.rows[0]!.id],
+    );
+
+    // Audit within the same transaction (rolls back with the accrual on any failure).
+    await audit(
+      params.scannerUserId,
+      'scan',
+      {
+        merchantId: params.merchantId,
+        targetType: 'user',
+        targetId: targetUserId,
+        meta: { rule_id: rule.id, delta },
+      },
+      client,
     );
 
     const tg = await client.query<{ telegram_id: number }>(
@@ -464,8 +483,11 @@ export async function audit(
   actorUserId: number,
   action: string,
   opts: { merchantId?: number | null; targetType?: string; targetId?: number; meta?: unknown } = {},
+  // Optional executor so a caller can write the audit row INSIDE its own
+  // transaction (pass the withTransaction client); defaults to the pool.
+  executor: Pick<typeof pool, 'query'> = pool,
 ): Promise<void> {
-  await pool.query(
+  await executor.query(
     `INSERT INTO audit_log (actor_user_id, merchant_id, action, target_type, target_id, meta)
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [

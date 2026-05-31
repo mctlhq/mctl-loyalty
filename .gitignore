@@ -1,6 +1,7 @@
 node_modules/
 web/node_modules/
 dist/
+dist-test/
 /public/
 landing/.astro/
 landing/dist/

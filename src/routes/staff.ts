@@ -9,11 +9,12 @@ import {
   cancelByStaff,
   fulfillByClaim,
   fulfillRedemption,
-  LedgerError,
   reverseTransaction,
   scanAndAccrue,
 } from '../services/ledger.js';
 import { addMember, listMembers, removeMember } from '../services/members.js';
+import { createRule, deactivateRule, listMerchantRules, updateRule } from '../services/rules.js';
+import { sendLedgerError } from '../middleware/errors.js';
 
 export const staffRouter = Router();
 
@@ -56,14 +57,6 @@ async function requireAnyAdmin(req: Request, res: Response, next: NextFunction):
   }
 }
 
-function sendLedgerError(res: Response, err: unknown, next: NextFunction): void {
-  if (err instanceof LedgerError) {
-    res.status(err.status).json({ error: err.message });
-    return;
-  }
-  next(err);
-}
-
 // Merchants where the caller is staff (super-admins see all active merchants).
 staffRouter.get('/staff/merchants', async (req, res, next) => {
   try {
@@ -103,6 +96,88 @@ staffRouter.get('/merchants/:mid/rules', requireMember(['admin', 'scanner']), as
     res.json({ rules: rows });
   } catch (err) {
     next(err);
+  }
+});
+
+// --- Accrual-rule management (merchant-admins; super-admin bypasses requireMember) ---
+// Distinct from the scan-picker GET /merchants/:mid/rules above: this lists ONLY
+// the merchant's OWN rules (no globals) and every mutation is WHERE-scoped to
+// merchant_id = mid, so an admin physically cannot touch globals or another
+// merchant's rules. The merchant_id is always forced server-side, never read
+// from the request body.
+
+staffRouter.get('/merchants/:mid/manage-rules', requireMember(['admin']), async (req, res, next) => {
+  try {
+    const rules = await listMerchantRules(Number.parseInt(req.params.mid!, 10));
+    res.json({ rules });
+  } catch (err) {
+    sendLedgerError(res, err, next);
+  }
+});
+
+staffRouter.post('/merchants/:mid/manage-rules', requireMember(['admin']), async (req, res, next) => {
+  try {
+    const ctx = getCtx(req);
+    const mid = Number.parseInt(req.params.mid!, 10);
+    const { id } = await createRule(mid, {
+      name: req.body?.name,
+      kind: req.body?.kind,
+      point_value: req.body?.point_value,
+      rate: req.body?.rate,
+      daily_limit: req.body?.daily_limit,
+      active: req.body?.active,
+    });
+    await audit(ctx.userId, 'rule.create', { merchantId: mid, targetType: 'rule', targetId: id, meta: { name: req.body?.name } });
+    res.json({ id });
+  } catch (err) {
+    sendLedgerError(res, err, next);
+  }
+});
+
+staffRouter.patch('/merchants/:mid/rules/:rid', requireMember(['admin']), async (req, res, next) => {
+  try {
+    const ctx = getCtx(req);
+    const mid = Number.parseInt(req.params.mid!, 10);
+    const rid = Number.parseInt(req.params.rid!, 10);
+    if (!Number.isFinite(rid)) {
+      res.status(400).json({ error: 'bad rule id' });
+      return;
+    }
+    await updateRule(
+      rid,
+      {
+        name: req.body?.name,
+        kind: req.body?.kind,
+        point_value: req.body?.point_value,
+        rate: req.body?.rate,
+        daily_limit: req.body?.daily_limit,
+        active: req.body?.active,
+      },
+      mid, // scope: only this merchant's own rules
+    );
+    await audit(ctx.userId, 'rule.update', { merchantId: mid, targetType: 'rule', targetId: rid });
+    res.json({ ok: true });
+  } catch (err) {
+    sendLedgerError(res, err, next);
+  }
+});
+
+// Soft-delete (deactivate), scoped to this merchant's own rules. No route hard-deletes
+// rules — a physical delete would cascade-wipe accrual rows and reset daily-limit counts.
+staffRouter.delete('/merchants/:mid/rules/:rid', requireMember(['admin']), async (req, res, next) => {
+  try {
+    const ctx = getCtx(req);
+    const mid = Number.parseInt(req.params.mid!, 10);
+    const rid = Number.parseInt(req.params.rid!, 10);
+    if (!Number.isFinite(rid)) {
+      res.status(400).json({ error: 'bad rule id' });
+      return;
+    }
+    await deactivateRule(rid, mid); // scope: only this merchant's own rules
+    await audit(ctx.userId, 'rule.deactivate', { merchantId: mid, targetType: 'rule', targetId: rid });
+    res.json({ ok: true });
+  } catch (err) {
+    sendLedgerError(res, err, next);
   }
 });
 
@@ -175,11 +250,7 @@ staffRouter.post('/merchants/:mid/scan', requireMember(['admin', 'scanner']), as
       merchantId: mid,
       scannerUserId: ctx.userId,
     });
-    await audit(ctx.userId, 'scan', {
-      merchantId: mid,
-      targetType: 'user',
-      meta: { rule_id: ruleId, delta: result.delta },
-    });
+    // The 'scan' audit row is written inside scanAndAccrue's transaction.
     void notify(targetTelegramId, `+${result.delta} points (${result.ruleName}). Balance: ${result.balance}`);
     res.json(result);
   } catch (err) {

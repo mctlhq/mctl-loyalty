@@ -16,6 +16,16 @@ interface Rule {
   point_value: number;
   daily_limit: number | null;
 }
+interface ManagedRule {
+  id: number;
+  merchant_id: number | null;
+  merchant_name: string | null;
+  name: string;
+  kind: string;
+  point_value: number;
+  daily_limit: number | null;
+  active: boolean;
+}
 interface Redemption {
   id: number;
   status: string;
@@ -70,6 +80,7 @@ export async function renderAdmin(root: HTMLElement): Promise<void> {
     </div>
     <div class="card"><h3>Redemption requests</h3><div id="redemptions">Loading…</div></div>
     <div class="card" id="staff-card"><h3>Staff</h3><div id="staff">Loading…</div></div>
+    <div class="card" id="rules-card"><h3>Accrual rules</h3><div id="rules">Loading…</div></div>
     ${isSuper ? superAdminPanels(merchants) : ''}
     <a class="link" href="/app">← My profile</a>
     <a class="link" href="/docs">Help &amp; guide</a>
@@ -80,6 +91,7 @@ export async function renderAdmin(root: HTMLElement): Promise<void> {
   select.addEventListener('change', () => {
     activeMerchant = Number(select.value);
     void loadStaff(root);
+    void loadRules(root);
   });
 
   root.querySelector<HTMLButtonElement>('#scan')!.addEventListener('click', () => void doScan());
@@ -87,6 +99,7 @@ export async function renderAdmin(root: HTMLElement): Promise<void> {
 
   await loadRedemptions(root);
   await loadStaff(root);
+  await loadRules(root);
   if (isSuper) wireSuperAdmin(root);
 }
 
@@ -248,6 +261,96 @@ async function loadStaff(root: HTMLElement): Promise<void> {
   });
 }
 
+// Per-merchant accrual rules for the active merchant. Lists/creates/deletes that
+// merchant's OWN rules only (globals are managed in the super-admin "All accrual
+// rules" panel). Visible to its admins and super-admins.
+async function loadRules(root: HTMLElement): Promise<void> {
+  const card = root.querySelector<HTMLElement>('#rules-card');
+  const el = root.querySelector<HTMLElement>('#rules');
+  if (!card || !el) return;
+  const canManage = isSuper || activeRole() === 'admin';
+  if (!activeMerchant || !canManage) {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = '';
+  let rules: ManagedRule[] = [];
+  try {
+    rules = (await api.get<{ rules: ManagedRule[] }>(`/merchants/${activeMerchant}/manage-rules`)).rules;
+  } catch {
+    rules = [];
+  }
+  el.innerHTML = `
+    <div class="muted">This merchant's own accrual rules. Global rules are available to every merchant but are managed by a super-admin.</div>
+    ${
+      rules.length
+        ? rules
+            .map(
+              (r) => `<div class="row">
+        <div>${esc(r.name)} <span class="muted">+${r.point_value}${r.daily_limit != null ? ` · max ${r.daily_limit}/day` : ''}${r.active ? '' : ' · inactive'}</span></div>
+        <button data-rule-toggle="${r.id}" data-active="${r.active ? '1' : '0'}">${r.active ? 'Deactivate' : 'Activate'}</button>
+      </div>`,
+            )
+            .join('')
+        : '<div class="muted">No rules yet</div>'
+    }
+    <fieldset><legend>Add rule</legend>
+      <input id="ru-name" placeholder="e.g. Visit" />
+      <input id="ru-points" placeholder="Points" inputmode="numeric" />
+      <input id="ru-limit" placeholder="Daily limit per customer" inputmode="numeric" />
+      <button id="ru-add">Add</button>
+    </fieldset>
+  `;
+  // Toggle active instead of deleting: a hard delete would cascade-wipe the rule's
+  // accrual history and reset daily-limit counts, so the merchant route soft-deletes.
+  el.querySelectorAll<HTMLButtonElement>('button[data-rule-toggle]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      try {
+        await api.patch(`/merchants/${activeMerchant}/rules/${b.dataset.ruleToggle}`, {
+          active: b.dataset.active !== '1',
+        });
+        await loadRules(root);
+      } catch (err) {
+        alertMsg((err as Error).message);
+      }
+    }),
+  );
+  el.querySelector('#ru-add')?.addEventListener('click', async () => {
+    const nameEl = root.querySelector<HTMLInputElement>('#ru-name')!;
+    const pointsEl = root.querySelector<HTMLInputElement>('#ru-points')!;
+    const limitEl = root.querySelector<HTMLInputElement>('#ru-limit')!;
+    const name = nameEl.value.trim();
+    const points = Number.parseInt(pointsEl.value.trim(), 10);
+    const limit = Number.parseInt(limitEl.value.trim(), 10);
+    if (!name) {
+      alertMsg('Enter a rule name');
+      return;
+    }
+    if (!Number.isFinite(points) || points <= 0) {
+      alertMsg('Points must be a positive number');
+      return;
+    }
+    if (!Number.isFinite(limit) || limit <= 0) {
+      alertMsg('Daily limit per customer is required (a positive number)');
+      return;
+    }
+    try {
+      await api.post(`/merchants/${activeMerchant}/manage-rules`, {
+        name,
+        kind: 'fixed',
+        point_value: points,
+        daily_limit: limit,
+      });
+      nameEl.value = '';
+      pointsEl.value = '';
+      limitEl.value = '';
+      await loadRules(root);
+    } catch (err) {
+      alertMsg((err as Error).message);
+    }
+  });
+}
+
 function superAdminPanels(ms: Merchant[]): string {
   const opts = ms.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
   return `
@@ -275,12 +378,51 @@ function superAdminPanels(ms: Merchant[]): string {
         <input id="rw-stock" placeholder="Stock (empty = ∞)" inputmode="numeric" />
         <button id="rw-create">Create (global)</button>
       </fieldset>
-    </div>`;
+    </div>
+    <div class="card"><h3>All accrual rules</h3><div id="all-rules">Loading…</div></div>`;
+}
+
+// Cross-merchant rule list for super-admins: every merchant's own rules + globals,
+// labeled with the owning merchant. Super-admins can activate/deactivate any rule
+// here (rules are deactivated, never hard-deleted, to preserve accrual history).
+async function loadAllRules(root: HTMLElement): Promise<void> {
+  const el = root.querySelector<HTMLElement>('#all-rules');
+  if (!el) return;
+  let rules: ManagedRule[] = [];
+  try {
+    rules = (await api.get<{ rules: ManagedRule[] }>('/admin/rules')).rules;
+  } catch (err) {
+    el.innerHTML = `<div class="muted">${esc((err as Error).message)}</div>`;
+    return;
+  }
+  el.innerHTML = rules.length
+    ? rules
+        .map(
+          (r) => `<div class="row">
+        <div>${esc(r.name)} <span class="muted">+${r.point_value}${r.daily_limit != null ? ` · max ${r.daily_limit}/day` : ''}${r.active ? '' : ' · inactive'}</span>
+          <div class="muted">${r.merchant_id == null ? 'Global' : esc(r.merchant_name ?? 'merchant ' + r.merchant_id)}</div></div>
+        <button data-all-rule-toggle="${r.id}" data-active="${r.active ? '1' : '0'}">${r.active ? 'Deactivate' : 'Activate'}</button>
+      </div>`,
+        )
+        .join('')
+    : '<div class="muted">No rules</div>';
+  el.querySelectorAll<HTMLButtonElement>('button[data-all-rule-toggle]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      try {
+        await api.patch(`/admin/rules/${b.dataset.allRuleToggle}`, { active: b.dataset.active !== '1' });
+        await loadAllRules(root);
+      } catch (err) {
+        alertMsg((err as Error).message);
+      }
+    }),
+  );
 }
 
 function wireSuperAdmin(root: HTMLElement): void {
   const val = (id: string) => root.querySelector<HTMLInputElement | HTMLSelectElement>(id)!.value.trim();
   const intOrNull = (v: string) => (v === '' ? null : Number.parseInt(v, 10));
+
+  void loadAllRules(root);
 
   root.querySelector('#m-create')?.addEventListener('click', () =>
     submit(() => api.post('/admin/merchants', { name: val('#m-name'), type: val('#m-type') }), root),

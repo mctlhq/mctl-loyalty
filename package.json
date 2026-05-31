@@ -15,7 +15,8 @@
     "build:api": "tsc -p tsconfig.json && cp src/db/schema.sql dist/db/schema.sql",
     "start": "node dist/server.js",
     "dev": "node --watch --experimental-strip-types src/server.ts",
-    "type-check": "tsc -p tsconfig.json --noEmit"
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.test.json && cp src/db/schema.sql dist-test/db/schema.sql && node --test \"dist-test/**/*.test.js\""
   },
   "dependencies": {
     "express": "^4.21.2",

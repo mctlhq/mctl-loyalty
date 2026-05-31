@@ -51,6 +51,12 @@ CREATE TABLE IF NOT EXISTS accrual_rules (
   active       BOOLEAN NOT NULL DEFAULT TRUE,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Idempotent migration for existing DBs: back-fill the per-merchant scope column
+-- (fresh installs get it from the CREATE TABLE above; this is a no-op there).
+-- NULL stays = global rule available to every merchant; existing rows untouched.
+ALTER TABLE accrual_rules
+  ADD COLUMN IF NOT EXISTS merchant_id BIGINT REFERENCES merchants(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_accrual_rules_merchant ON accrual_rules(merchant_id);
 
 -- Append-only points ledger. The balance is always the sum of deltas.
 CREATE TABLE IF NOT EXISTS transactions (
@@ -82,10 +88,15 @@ CREATE TABLE IF NOT EXISTS qr_tokens (
 CREATE INDEX IF NOT EXISTS idx_qr_tokens_expires ON qr_tokens(expires_at);
 
 -- Backs the DB-level daily accrual limit. The accrue path takes a transaction-
--- scoped advisory lock keyed on (user_id, rule_id) so concurrent scans of the
--- same user+rule serialize, then counts today's rows against the rule's
--- daily_limit before inserting. Because lock + count + insert all run inside one
--- transaction, the cap is enforced by the database, not just application code.
+-- scoped advisory lock keyed on (user_id, merchant_id) so concurrent scans of the
+-- same customer at the same merchant serialize, then counts today's accrual rows
+-- for that (user, merchant) ACROSS ALL of the merchant's rules (joined through
+-- transactions.merchant_id) against the applied rule's daily_limit before
+-- inserting. rule_id is deliberately NOT part of the lock/count: keying on it
+-- would let a merchant-admin rotate rule_ids to reset the counter and mint the
+-- shared currency without bound. Lock + count + insert run in one transaction, so
+-- the cap is enforced by the database, not just application code. Do NOT narrow
+-- this back to per-rule.
 CREATE TABLE IF NOT EXISTS accruals (
   id              BIGSERIAL PRIMARY KEY,
   user_id         BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -94,6 +105,12 @@ CREATE TABLE IF NOT EXISTS accruals (
   transaction_id  BIGINT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- The per-(user, merchant, day) cap count filters on user_id + accrual_date (and
+-- transactions.merchant_id via the join), so this index serves it through its
+-- user_id prefix. rule_id stays for other rule-scoped lookups; per-(user, merchant,
+-- day) row counts are tiny, so the exact column shape is not critical. (Kept as-is
+-- rather than narrowed, since CREATE INDEX IF NOT EXISTS won't rebuild it on
+-- existing DBs anyway — avoids a fresh-vs-existing index mismatch.)
 CREATE INDEX IF NOT EXISTS idx_accruals_daily
   ON accruals(user_id, rule_id, accrual_date);
 
