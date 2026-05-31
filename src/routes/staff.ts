@@ -250,11 +250,7 @@ staffRouter.post('/merchants/:mid/scan', requireMember(['admin', 'scanner']), as
       merchantId: mid,
       scannerUserId: ctx.userId,
     });
-    await audit(ctx.userId, 'scan', {
-      merchantId: mid,
-      targetType: 'user',
-      meta: { rule_id: ruleId, delta: result.delta },
-    });
+    // The 'scan' audit row is written inside scanAndAccrue's transaction.
     void notify(targetTelegramId, `+${result.delta} points (${result.ruleName}). Balance: ${result.balance}`);
     res.json(result);
   } catch (err) {

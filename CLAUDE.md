@@ -17,10 +17,13 @@ Bot: **@MCTL Rewards** (`@mctl_rewards_bot`). Current image: **0.8.0**.
   **accrual rule** → points credited. Daily limits enforced at the DB level.
   Accrual rules are global (super-admin) or per-merchant (a merchant-admin manages
   its own). `point_value` is capped (`MAX_POINT_VALUE`) and a merchant-scoped rule
-  must declare a `daily_limit` (per-customer/day, also capped) so a merchant-admin
-  cannot mint unbounded points; globals may omit the limit. Merchant-admins can only
-  deactivate their rules (soft-delete) — hard delete is super-admin only, since the
-  `accruals` FK cascade would otherwise reset daily-limit history.
+  must declare a `daily_limit` (also capped); globals may omit it. The daily cap is
+  enforced **per (customer, merchant, day) across ALL of the merchant's rules** —
+  `rule_id` is deliberately NOT part of the count/advisory-lock in `scanAndAccrue`,
+  so a merchant-admin cannot rotate `rule_id`s (create extra rules) to reset the
+  counter and mint the shared global currency without bound. Rules are only ever
+  **deactivated** (soft-delete), never hard-deleted, since the `accruals` FK cascade
+  would otherwise wipe daily-limit history.
 - **Redeeming (hold → capture)**: tapping a reward HOLDS the points immediately
   (`pending`, balance debited, stock decremented) and shows the user a **redemption QR**.
   Staff scan that QR ("Scan redemption") to **capture/fulfill** it. If the user cancels
