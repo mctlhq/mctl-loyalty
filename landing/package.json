@@ -1,0 +1,14 @@
+{
+  "name": "mctl-loyalty-landing",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "astro build",
+    "dev": "astro dev",
+    "preview": "astro preview"
+  },
+  "devDependencies": {
+    "astro": "^4.16.18"
+  }
+}

@@ -1,0 +1,58 @@
+---
+import Base from '../layouts/Base.astro';
+
+const title = 'Privacy Policy — MCTL Rewards';
+const description =
+  'How MCTL Rewards handles your data within the Telegram Mini App loyalty program.';
+---
+
+<Base title={title} description={description} path="/privacy">
+  <main class="container doc">
+    <h1>Privacy Policy</h1>
+    <span class="draft">Draft — placeholder copy, not yet legal advice</span>
+
+    <p>
+      This page describes, in plain language, how the MCTL Rewards Telegram
+      Mini App ("the Service") handles your information. This is a draft and
+      will be replaced with a finalized policy before general availability.
+    </p>
+
+    <h2>What we collect</h2>
+    <p>
+      When you open the Service from Telegram, we receive your Telegram user
+      identifier and basic profile fields (such as your first name and
+      username) so we can create and identify your loyalty wallet. We store
+      your points balance and a history of transactions (accruals and
+      redemptions) tied to that identifier.
+    </p>
+
+    <h2>How we use it</h2>
+    <p>
+      We use this data solely to operate the loyalty program: crediting points
+      when a merchant scans your QR, letting you redeem rewards, and showing
+      your transaction history. We do not sell your data.
+    </p>
+
+    <h2>Who can see your data</h2>
+    <p>
+      Merchant staff can see that a scan credited points to your wallet and the
+      reward you redeem from them. They do not receive your full Telegram
+      profile beyond what is needed to complete a transaction.
+    </p>
+
+    <h2>Retention</h2>
+    <p>
+      We keep your wallet and transaction records for as long as your account
+      is active. You can request deletion of your account and associated data
+      by contacting the community administrators.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+      Questions about this policy can be directed to the community
+      administrators that operate this instance of the Service.
+    </p>
+
+    <a class="back" href="/">← Back to home</a>
+  </main>
+</Base>

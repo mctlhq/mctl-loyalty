@@ -1,0 +1,14 @@
+---
+import Base from '../layouts/Base.astro';
+
+const title = 'Page not found — MCTL Rewards';
+const description = 'The page you are looking for does not exist.';
+---
+
+<Base title={title} description={description} path="/404">
+  <main class="container doc" style="text-align:center;">
+    <h1>404</h1>
+    <p>The page you are looking for does not exist.</p>
+    <a class="btn" href="/" style="margin-top:24px;">Back to home</a>
+  </main>
+</Base>

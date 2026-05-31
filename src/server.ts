@@ -49,11 +49,29 @@ api.use('/', staffRouter);
 api.use('/admin', adminRouter);
 app.use('/api', api);
 
-// ---- static SPA ----
-// One Vite build lives in /public; client-side routing handles /app and /admin.
-app.use(express.static(PUBLIC_DIR, { index: false }));
-app.get(['/', '/app', '/app/*', '/admin', '/admin/*', '/help', '/help/*', '/docs', '/docs/*'], (_req, res) => {
-  res.sendFile(resolve(PUBLIC_DIR, 'index.html'));
+// ---- static assets ----
+// /public holds two builds: the Astro marketing landing at the root
+// (index.html, /privacy, /terms, assets under /_astro) and the Vite Mini App
+// SPA under /_miniapp (assets under /_miniapp/assets). express.static serves
+// every real file (landing pages, /_astro/*, /_miniapp/*) including the
+// landing's index.html at `/`.
+app.use(express.static(PUBLIC_DIR));
+
+// ---- Mini App SPA fallback ----
+// Client-routed paths (/app, /admin, /help, /docs) are not real files, so map
+// them to the SPA's index.html. The root `/` is intentionally NOT here — it is
+// the Astro landing served by express.static above.
+app.get(['/app', '/app/*', '/admin', '/admin/*', '/help', '/help/*', '/docs', '/docs/*'], (_req, res) => {
+  res.sendFile(resolve(PUBLIC_DIR, '_miniapp', 'index.html'));
+});
+
+// ---- catch-all ----
+// Unknown paths fall through to the landing's 404 page (or home if absent).
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method !== 'GET') return next();
+  res.status(404).sendFile(resolve(PUBLIC_DIR, '404.html'), (err) => {
+    if (err && !res.headersSent) res.redirect('/');
+  });
 });
 
 // ---- error handler ----
