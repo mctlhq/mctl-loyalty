@@ -1,5 +1,25 @@
+// Staff /admin — Direction C, role-based tabbed Mini App (vanilla TS).
+// One persistent shell (scroll + in-DOM MainBar + bottom tab bar); tabs swap the
+// scroll content. Roles: scanner (2 tabs) / merchant-admin (4) / super (5).
+// All backend contracts are unchanged from the previous implementation.
 import { api } from './api.js';
-import { alertMsg, scanQr, startMerchantId } from './tg.js';
+import { scanQr, startMerchantId } from './tg.js';
+import {
+  esc,
+  icon,
+  sectionLabel,
+  avatarFor,
+  emptyState,
+  skeleton,
+  field,
+  segmented,
+  presetsFill,
+  segValue,
+  openSheet,
+  openDialog,
+  toast,
+  closeOverlays,
+} from './ui.js';
 
 interface Me {
   super_admin: boolean;
@@ -42,106 +62,284 @@ interface Member {
   role: string;
 }
 
-let activeMerchant: number | null = null;
+type Tab = 'scan' | 'requests' | 'staff' | 'rules' | 'program';
+interface TabDef {
+  id: Tab;
+  icon: string;
+  label: string;
+}
+const SCANNER_TABS: TabDef[] = [
+  { id: 'scan', icon: 'qr', label: 'Scan' },
+  { id: 'requests', icon: 'list', label: 'Requests' },
+];
+const ADMIN_TABS: TabDef[] = [
+  ...SCANNER_TABS,
+  { id: 'staff', icon: 'people', label: 'Staff' },
+  { id: 'rules', icon: 'bolt', label: 'Rules' },
+];
+const SUPER_TABS: TabDef[] = [...ADMIN_TABS, { id: 'program', icon: 'grid', label: 'Program' }];
+
+const STATUS_TONE: Record<string, string> = {
+  pending: 'accent',
+  fulfilled: 'success',
+  cancelled: 'muted',
+  expired: 'danger',
+};
+
 let merchants: Merchant[] = [];
 let isSuper = false;
+let activeMerchant: number | null = null;
+let activeTab: Tab = 'scan';
+let requestsFilter = 'all';
 let deepLinkApplied = false; // apply a `startapp=merchant_<id>` preselect at most once
 
 function activeRole(): string | null {
   return merchants.find((m) => m.id === activeMerchant)?.role ?? null;
 }
+function currentMerchant(): Merchant | null {
+  return merchants.find((m) => m.id === activeMerchant) ?? null;
+}
+function canManage(): boolean {
+  return isSuper || activeRole() === 'admin';
+}
+function tabsFor(): TabDef[] {
+  if (isSuper) return SUPER_TABS;
+  if (activeRole() === 'admin') return ADMIN_TABS;
+  return SCANNER_TABS;
+}
+function normStatus(s: string): string {
+  return s.startsWith('cancelled') ? 'cancelled' : s;
+}
+function fmt(iso: string): string {
+  return new Date(iso).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
+}
+function errToast(err: unknown): void {
+  toast({ title: (err as Error).message, tone: 'danger' });
+}
 
 export async function renderAdmin(root: HTMLElement): Promise<void> {
+  closeOverlays();
   const me = await api.get<Me>('/me');
   isSuper = me.super_admin;
   merchants = (await api.get<{ merchants: Merchant[] }>('/staff/merchants')).merchants;
 
   if (!merchants.length && !isSuper) {
-    root.innerHTML = '<div class="card">You have no merchant access.</div><a class="link" href="/docs">Help &amp; guide</a>';
+    renderNoAccess(root);
     return;
   }
-  // Deep-link preselect: if the caller opened a merchant Direct Link and is staff
-  // of that merchant, focus it (once per session, so manual changes stick after).
+  // Deep-link preselect: focus a merchant opened via a Direct Link, once per
+  // session, so manual switches stick afterwards.
   const startId = startMerchantId();
   if (!deepLinkApplied && startId !== null && merchants.some((m) => m.id === startId)) {
     activeMerchant = startId;
     deepLinkApplied = true;
   }
   if (activeMerchant === null && merchants.length) activeMerchant = merchants[0]!.id;
+  // Keep the active tab valid for the current role.
+  if (!tabsFor().some((t) => t.id === activeTab)) activeTab = 'scan';
 
   root.innerHTML = `
-    <div class="card">
-      <h3>Scanning</h3>
-      <label>Merchant
-        <select id="merchant">${merchants.map((m) => `<option value="${m.id}">${esc(m.name)} (${m.role})</option>`).join('')}</select>
-      </label>
-      <button id="scan" class="primary">Scan to award</button>
-      <button id="scan-redeem" class="primary">Scan redemption</button>
-    </div>
-    <div class="card"><h3>Redemption requests</h3><div id="redemptions">Loading…</div></div>
-    <div class="card" id="staff-card"><h3>Staff</h3><div id="staff">Loading…</div></div>
-    <div class="card" id="rules-card"><h3>Accrual rules</h3><div id="rules">Loading…</div></div>
-    ${isSuper ? superAdminPanels(merchants) : ''}
-    <a class="link" href="/app">← My profile</a>
-    <a class="link" href="/docs">Help &amp; guide</a>
-  `;
-
-  const select = root.querySelector<HTMLSelectElement>('#merchant')!;
-  if (activeMerchant) select.value = String(activeMerchant);
-  select.addEventListener('change', () => {
-    activeMerchant = Number(select.value);
-    void loadStaff(root);
-    void loadRules(root);
-  });
-
-  root.querySelector<HTMLButtonElement>('#scan')!.addEventListener('click', () => void doScan());
-  root.querySelector<HTMLButtonElement>('#scan-redeem')!.addEventListener('click', () => void doRedeemScan(root));
-
-  await loadRedemptions(root);
-  await loadStaff(root);
-  await loadRules(root);
-  if (isSuper) wireSuperAdmin(root);
+    <div class="m-app">
+      <div class="m-scroll" id="m-content"></div>
+      <div class="m-mainbar" id="m-mainbar" style="display:none"></div>
+      <nav class="m-tabbar" id="m-tabbar"></nav>
+    </div>`;
+  renderTabBar(root);
+  await applyTab(root);
 }
 
-async function doScan(): Promise<void> {
-  if (!activeMerchant) {
-    alertMsg('Select a merchant');
+function renderNoAccess(root: HTMLElement): void {
+  root.innerHTML = `
+    <div class="m-app"><div class="m-scroll">
+      <div class="m-state">
+        <div class="m-icon-circle lg">${icon('store', { size: 24 })}</div>
+        <div class="h">No merchant access</div>
+        <div class="p">You're not staff at any merchant yet. Ask a merchant admin to add your Telegram ID.</div>
+        <div class="links" style="margin-top:22px"><a class="link" href="/app">← My profile</a> <a class="link" href="/docs">Help &amp; guide</a></div>
+      </div>
+    </div></div>`;
+}
+
+function renderTabBar(root: HTMLElement): void {
+  const bar = root.querySelector<HTMLElement>('#m-tabbar')!;
+  const tabs = tabsFor();
+  bar.innerHTML = tabs
+    .map(
+      (t) =>
+        `<button class="m-tab${t.id === activeTab ? ' active' : ''}" data-tab="${t.id}">${icon(t.icon, { size: 22, stroke: t.id === activeTab ? 1.9 : 1.6 })}<span>${esc(t.label)}</span></button>`,
+    )
+    .join('');
+  bar.querySelectorAll<HTMLButtonElement>('.m-tab').forEach((b) =>
+    b.addEventListener('click', () => {
+      const next = b.dataset.tab as Tab;
+      if (next === activeTab) return;
+      activeTab = next;
+      closeOverlays();
+      renderTabBar(root);
+      void applyTab(root);
+    }),
+  );
+}
+
+function setMainBar(root: HTMLElement, html: string): void {
+  const bar = root.querySelector<HTMLElement>('#m-mainbar')!;
+  bar.innerHTML = html;
+  bar.style.display = html ? '' : 'none';
+}
+
+function content(root: HTMLElement): HTMLElement {
+  return root.querySelector<HTMLElement>('#m-content')!;
+}
+
+// Dispatch to the active tab loader; each fully renders content + main bar.
+async function applyTab(root: HTMLElement): Promise<void> {
+  content(root).scrollTop = 0;
+  switch (activeTab) {
+    case 'scan':
+      renderScanTab(root);
+      break;
+    case 'requests':
+      await loadRequests(root);
+      break;
+    case 'staff':
+      await loadStaff(root);
+      break;
+    case 'rules':
+      await loadRules(root);
+      break;
+    case 'program':
+      await loadProgram(root);
+      break;
+  }
+}
+
+// ---------------------------------------------------------------- Scan tab
+function renderScanTab(root: HTMLElement): void {
+  const m = currentMerchant();
+  const multi = merchants.length > 1;
+  if (!m) {
+    content(root).innerHTML =
+      sectionLabel('Counter') +
+      emptyState(
+        'store',
+        'No merchant selected',
+        isSuper
+          ? 'Create a merchant in the Program tab, then add yourself as staff to scan here.'
+          : 'Ask a merchant admin to add your Telegram ID.',
+      );
+    setMainBar(root, '');
     return;
   }
+  const roleWord = m.role === 'scanner' ? 'a scanner' : m.role === 'admin' ? 'an admin' : 'a super-admin';
+  content(root).innerHTML = `
+    ${sectionLabel('Counter')}
+    <button class="m-selector${multi ? ' tappable' : ''}" id="m-merchant">
+      ${icon('store', { size: 19 })}
+      <span class="grow"><span class="val">${esc(m.name)}</span><span class="sub">${multi ? 'Tap to switch merchant' : `You're ${roleWord} here`}</span></span>
+      ${multi ? icon('chevron', { size: 17 }) : `<span class="m-tag">${esc(m.role)}</span>`}
+    </button>
+    <div class="m-spacer"></div>
+    <div class="m-card"><div class="m-scan-hero">
+      <div class="frame">${icon('qr', { size: 42, stroke: 1.5 })}</div>
+      <div class="h">Ready to scan</div>
+      <div class="p">Tap <b>Scan to award</b>, point at the member's rotating QR, then pick an accrual rule. Points credit instantly.</div>
+    </div></div>`;
+  setMainBar(
+    root,
+    `<button class="m-mainbtn secondary" id="m-scan-redeem">Scan redemption</button>
+     <button class="m-mainbtn" id="m-scan-award">${icon('qr', { size: 19, stroke: 1.8 })}Scan to award</button>`,
+  );
+  if (multi) {
+    content(root)
+      .querySelector('#m-merchant')!
+      .addEventListener('click', () => openMerchantSheet(root));
+  }
+  root.querySelector('#m-scan-award')!.addEventListener('click', () => void doScanAward(root));
+  root.querySelector('#m-scan-redeem')!.addEventListener('click', () => void doRedeemScan(root));
+}
+
+function openMerchantSheet(root: HTMLElement): void {
+  const rows = merchants
+    .map(
+      (m) =>
+        `<button class="m-pick${m.id === activeMerchant ? ' active' : ''}" data-id="${m.id}">
+          ${icon('store', { size: 18 })}<span class="grow">${esc(m.name)}</span>
+          <span class="m-tag">${esc(m.role)}</span>${m.id === activeMerchant ? icon('check', { size: 17, stroke: 2 }) : ''}
+        </button>`,
+    )
+    .join('');
+  const { el, close } = openSheet(`<div class="h" style="margin-bottom:16px">Switch merchant</div><div class="m-pick-list">${rows}</div>`);
+  el.querySelectorAll<HTMLButtonElement>('.m-pick').forEach((b) =>
+    b.addEventListener('click', () => {
+      activeMerchant = Number(b.dataset.id);
+      close();
+      renderScanTab(root);
+    }),
+  );
+}
+
+async function doScanAward(root: HTMLElement): Promise<void> {
+  if (!activeMerchant) return;
   const token = await scanQr();
   if (!token) return;
+  let rules: Rule[];
   try {
-    const { rules } = await api.get<{ rules: Rule[] }>(`/merchants/${activeMerchant}/rules`);
-    if (!rules.length) {
-      alertMsg('No accrual rules. Create one first.');
-      return;
-    }
-    let rule = rules[0]!;
-    if (rules.length > 1) {
-      const choice = window.prompt(
-        'Rule:\n' + rules.map((r, i) => `${i + 1}. ${r.name} (+${r.point_value})`).join('\n'),
-        '1',
-      );
-      if (choice === null) return; // cancelled — abort the scan
-      const idx = Number(choice) - 1;
-      if (rules[idx]) rule = rules[idx]!;
-    }
-    const r = await api.post<{ delta: number; balance: number }>(`/merchants/${activeMerchant}/scan`, {
-      token,
-      rule_id: rule.id,
-    });
-    alertMsg(`Awarded +${r.delta}. Customer balance: ${r.balance}`);
+    rules = (await api.get<{ rules: Rule[] }>(`/merchants/${activeMerchant}/rules`)).rules;
   } catch (err) {
-    alertMsg((err as Error).message);
-  }
-}
-
-// Scan a customer's redemption QR to capture (fulfill) the reward.
-async function doRedeemScan(root: HTMLElement): Promise<void> {
-  if (!activeMerchant) {
-    alertMsg('Select a merchant');
+    errToast(err);
     return;
   }
+  if (!rules.length) {
+    toast({ title: 'No accrual rules', sub: 'Create one in the Rules tab first.', tone: 'danger' });
+    return;
+  }
+  if (rules.length === 1) {
+    openAwardConfirm(root, token, rules[0]!);
+    return;
+  }
+  // Multiple rules: tap-select before awarding.
+  const list = rules
+    .map(
+      (r) =>
+        `<button class="m-program-action" data-rule="${r.id}">
+          <span class="grow"><span class="title">${esc(r.name)}</span>${r.daily_limit != null ? `<span class="sub">Daily limit: ${r.daily_limit} / day</span>` : '<span class="sub">No daily limit</span>'}</span>
+          <span class="m-pill accent sm">+${r.point_value} pts</span>
+        </button>`,
+    )
+    .join('');
+  const { el, close } = openSheet(`<div class="h" style="margin-bottom:16px">Choose an accrual rule</div><div class="m-stack">${list}</div>`);
+  el.querySelectorAll<HTMLButtonElement>('[data-rule]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const rule = rules.find((r) => r.id === Number(b.dataset.rule))!;
+      close();
+      openAwardConfirm(root, token, rule);
+    }),
+  );
+}
+
+function openAwardConfirm(root: HTMLElement, token: string, rule: Rule): void {
+  const { el, close } = openSheet(
+    `<div class="h">Award +${rule.point_value} points?</div>
+     <div class="sub" style="margin-top:8px">Rule <b>${esc(rule.name)}</b>${rule.daily_limit != null ? ` · max ${rule.daily_limit}/day` : ''}. Points credit immediately and the member gets a Telegram notification.</div>
+     <button class="m-mainbtn" id="m-award-go">Award +${rule.point_value} pts</button>`,
+  );
+  el.querySelector('#m-award-go')!.addEventListener('click', async () => {
+    try {
+      const r = await api.post<{ delta: number; balance: number }>(`/merchants/${activeMerchant}/scan`, {
+        token,
+        rule_id: rule.id,
+      });
+      close();
+      toast({ title: `Awarded +${r.delta}`, sub: `Member balance: ${r.balance}`, tone: 'success' });
+    } catch (err) {
+      close();
+      errToast(err);
+    }
+  });
+}
+
+async function doRedeemScan(root: HTMLElement): Promise<void> {
+  if (!activeMerchant) return;
   const token = await scanQr();
   if (!token) return;
   try {
@@ -149,329 +347,490 @@ async function doRedeemScan(root: HTMLElement): Promise<void> {
       `/merchants/${activeMerchant}/redeem-scan`,
       { token },
     );
-    alertMsg(`Reward fulfilled: ${r.rewardTitle} (-${r.cost})`);
-    await loadRedemptions(root);
+    toast({ title: `Fulfilled: ${r.rewardTitle}`, sub: `−${r.cost} points`, tone: 'success' });
+    if (activeTab === 'requests') await loadRequests(root);
   } catch (err) {
-    alertMsg((err as Error).message);
+    errToast(err);
   }
 }
 
-async function loadRedemptions(root: HTMLElement): Promise<void> {
-  const el = root.querySelector('#redemptions');
-  if (!el) return;
-  // Manual fulfill/cancel are admin-only overrides; scanners use "Scan
-  // redemption" and see the list read-only.
-  const canManage = isSuper || activeRole() === 'admin';
-  const { redemptions } = await api.get<{ redemptions: Redemption[] }>('/redemptions');
-  el.innerHTML = redemptions.length
-    ? redemptions
-        .map(
-          (r) => `<div class="row">
-            <div><b>${esc(r.reward_title)}</b> — ${r.cost}
-              <div class="muted">${r.username ? '@' + esc(r.username) : 'id ' + r.telegram_id} · ${r.status}</div></div>
-            ${
-              r.status === 'pending' && canManage
-                ? `<span><button class="ghost" data-fulfill="${r.id}">Fulfill manually</button> <button data-cancel="${r.id}">Cancel</button></span>`
-                : ''
-            }
-          </div>`,
-        )
-        .join('')
-    : '<div class="muted">No requests</div>';
-  el.querySelectorAll<HTMLButtonElement>('button[data-fulfill]').forEach((b) =>
-    b.addEventListener('click', () => {
-      const reason = window.prompt('Reason for manual fulfill:');
-      if (!reason) return; // empty/cancelled — abort
-      void act(`/redemptions/${b.dataset.fulfill}/fulfill`, root, { reason });
-    }),
-  );
-  el.querySelectorAll<HTMLButtonElement>('button[data-cancel]').forEach((b) =>
-    b.addEventListener('click', () => void act(`/redemptions/${b.dataset.cancel}/cancel`, root)),
-  );
-}
-
-async function act(path: string, root: HTMLElement, body?: unknown): Promise<void> {
+// ---------------------------------------------------------------- Requests tab
+async function loadRequests(root: HTMLElement): Promise<void> {
+  setMainBar(root, '');
+  const el = content(root);
+  el.innerHTML = sectionLabel('Redemption requests') + skeleton('100%', 64, 8) + skeleton('100%', 64, 10);
+  let redemptions: Redemption[];
   try {
-    await api.post(path, body);
-    await loadRedemptions(root);
+    redemptions = (await api.get<{ redemptions: Redemption[] }>('/redemptions')).redemptions;
   } catch (err) {
-    alertMsg((err as Error).message);
-  }
-}
-
-// Staff management for the active merchant. Visible to its admins (and super-admins).
-async function loadStaff(root: HTMLElement): Promise<void> {
-  const card = root.querySelector<HTMLElement>('#staff-card');
-  const el = root.querySelector<HTMLElement>('#staff');
-  if (!card || !el) return;
-  const canManage = isSuper || activeRole() === 'admin';
-  if (!activeMerchant || !canManage) {
-    card.style.display = 'none';
+    if (activeTab !== 'requests') return;
+    el.innerHTML = sectionLabel('Redemption requests') + emptyState('alert', "Couldn't load requests", (err as Error).message);
     return;
   }
-  card.style.display = '';
+  if (activeTab !== 'requests') return; // tab switched mid-load — don't clobber
+  const filters = ['all', 'pending', 'fulfilled', 'cancelled', 'expired'];
+  const list = redemptions.filter((r) => requestsFilter === 'all' || normStatus(r.status) === requestsFilter);
+  const manage = canManage();
+  el.innerHTML =
+    sectionLabel('Redemption requests', `${list.length} ${list.length === 1 ? 'request' : 'requests'}`) +
+    `<div class="m-filters">${filters
+      .map((f) => `<button class="m-filter-chip${f === requestsFilter ? ' active' : ''}" data-filter="${f}">${f}</button>`)
+      .join('')}</div>` +
+    (list.length
+      ? list
+          .map((r, i) => {
+            const st = normStatus(r.status);
+            const who = r.username ? '@' + esc(r.username) : 'id ' + r.telegram_id;
+            const actions =
+              r.status === 'pending' && manage
+                ? `<div class="m-req-actions"><button class="m-pill sm outline" data-fulfill="${r.id}">Fulfill</button><button class="m-pill sm line" data-cancel="${r.id}">Cancel</button></div>`
+                : '';
+            return `<div class="m-row${i === 0 ? ' first' : ''}">
+              <div class="grow"><div class="title">${esc(r.reward_title)}</div>
+                <div class="sub">${r.cost} pts · ${who} · ${fmt(r.created_at)}</div>${actions}</div>
+              <span class="m-tag ${STATUS_TONE[st] ?? 'muted'}">${st}</span>
+            </div>`;
+          })
+          .join('')
+      : emptyState('list', 'Nothing here', `No ${requestsFilter} requests right now.`));
+
+  el.querySelectorAll<HTMLButtonElement>('.m-filter-chip').forEach((b) =>
+    b.addEventListener('click', () => {
+      requestsFilter = b.dataset.filter!;
+      void loadRequests(root);
+    }),
+  );
+  el.querySelectorAll<HTMLButtonElement>('[data-fulfill]').forEach((b) =>
+    b.addEventListener('click', () => openFulfillSheet(root, Number(b.dataset.fulfill))),
+  );
+  el.querySelectorAll<HTMLButtonElement>('[data-cancel]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const ok = await openDialog({
+        title: 'Cancel this redemption?',
+        body: 'The member gets their points back and the reward stock is restored.',
+        confirmLabel: 'Cancel redemption',
+        cancelLabel: 'Keep it',
+        tone: 'danger',
+      });
+      if (!ok) return;
+      try {
+        await api.post(`/redemptions/${b.dataset.cancel}/cancel`);
+        await loadRequests(root);
+      } catch (err) {
+        errToast(err);
+      }
+    }),
+  );
+}
+
+function openFulfillSheet(root: HTMLElement, id: number): void {
+  const { el, close } = openSheet(
+    `<div class="h" style="margin-bottom:18px">Fulfill manually</div>
+     <div class="m-formstack">${field({ id: 'm-fulfill-reason', label: 'Reason (required)', placeholder: 'e.g. handed over in person' })}</div>
+     <button class="m-mainbtn" id="m-fulfill-go">Mark fulfilled</button>`,
+  );
+  el.querySelector('#m-fulfill-go')!.addEventListener('click', async () => {
+    const reason = el.querySelector<HTMLInputElement>('#m-fulfill-reason')!.value.trim();
+    if (!reason) {
+      toast({ title: 'A reason is required', tone: 'danger' });
+      return;
+    }
+    try {
+      await api.post(`/redemptions/${id}/fulfill`, { reason });
+      close();
+      await loadRequests(root);
+    } catch (err) {
+      close();
+      errToast(err);
+    }
+  });
+}
+
+// ---------------------------------------------------------------- Staff tab
+async function loadStaff(root: HTMLElement): Promise<void> {
+  const m = currentMerchant();
+  if (!m || !canManage()) {
+    setMainBar(root, '');
+    content(root).innerHTML = sectionLabel('Staff') + emptyState('people', 'No merchant', 'Select a merchant you administer to manage its staff.');
+    return;
+  }
+  setMainBar(root, `<button class="m-mainbtn" id="m-add-staff">${icon('plus', { size: 19, stroke: 1.8 })}Add staff</button>`);
+  const el = content(root);
+  el.innerHTML = sectionLabel('Staff') + skeleton('100%', 56, 8) + skeleton('100%', 56, 10);
   let members: Member[] = [];
   try {
-    members = (await api.get<{ members: Member[] }>(`/merchants/${activeMerchant}/members`)).members;
+    members = (await api.get<{ members: Member[] }>(`/merchants/${m.id}/members`)).members;
   } catch {
     members = [];
   }
-  const roleOptions = isSuper
-    ? '<option value="scanner">scanner</option><option value="admin">admin</option>'
-    : '<option value="scanner">scanner</option>';
-  el.innerHTML = `
-    <div class="muted">Ask the employee to open the bot and copy their ID from their profile screen.</div>
-    ${
-      members.length
-        ? members
-            .map(
-              (m) => `<div class="row">
-        <div>${m.username ? '@' + esc(m.username) : 'id ' + m.telegram_id}<div class="muted">${m.role} · id ${m.telegram_id}</div></div>
-        ${m.role === 'scanner' || isSuper ? `<button data-remove="${m.user_id}">Remove</button>` : ''}
-      </div>`,
-            )
-            .join('')
-        : '<div class="muted">No staff yet</div>'
-    }
-    <fieldset><legend>Add staff</legend>
-      <input id="st-tg" placeholder="telegram_id" inputmode="numeric" />
-      <select id="st-role">${roleOptions}</select>
-      <button id="st-add">Add</button>
-    </fieldset>
-  `;
-  el.querySelectorAll<HTMLButtonElement>('button[data-remove]').forEach((b) =>
+  if (activeTab !== 'staff' || activeMerchant !== m.id) return; // switched mid-load
+  el.innerHTML =
+    sectionLabel('Staff', members.length ? `${members.length} ${members.length === 1 ? 'member' : 'members'}` : undefined) +
+    `<div class="m-hint">Working at <b>${esc(m.name)}</b>. Ask the employee to open the bot and copy their Telegram ID from their profile.</div>` +
+    (members.length
+      ? members
+          .map((s, i) => {
+            const who = s.username ? '@' + esc(s.username) : 'id ' + s.telegram_id;
+            const removable = s.role === 'scanner' || isSuper;
+            return `<div class="m-row${i === 0 ? ' first' : ''}">
+              ${avatarFor(s.username, s.telegram_id)}
+              <div class="grow"><div class="title">${who}</div><div class="sub mono">ID ${s.telegram_id}</div></div>
+              <span class="m-tag ${s.role === 'admin' ? 'accent' : 'muted'}">${esc(s.role)}</span>
+              ${removable ? `<button class="m-iconbtn" data-remove="${s.user_id}" aria-label="Remove">${icon('trash', { size: 17 })}</button>` : ''}
+            </div>`;
+          })
+          .join('')
+      : emptyState('people', 'No staff yet', 'Add a scanner or admin by their Telegram ID to let them work the counter.'));
+
+  root.querySelector('#m-add-staff')!.addEventListener('click', () => openAddStaffSheet(root, m));
+  el.querySelectorAll<HTMLButtonElement>('[data-remove]').forEach((b) =>
     b.addEventListener('click', async () => {
+      const ok = await openDialog({
+        title: 'Remove this staff member?',
+        body: 'They lose access to this merchant immediately.',
+        confirmLabel: 'Remove',
+        tone: 'danger',
+      });
+      if (!ok) return;
       try {
-        await api.del(`/merchants/${activeMerchant}/members/${b.dataset.remove}`);
+        await api.del(`/merchants/${m.id}/members/${b.dataset.remove}`);
         await loadStaff(root);
       } catch (err) {
-        alertMsg((err as Error).message);
+        errToast(err);
       }
     }),
   );
-  el.querySelector('#st-add')?.addEventListener('click', async () => {
-    const tg = Number((root.querySelector<HTMLInputElement>('#st-tg')!).value.trim());
-    const role = (root.querySelector<HTMLSelectElement>('#st-role')!).value;
+}
+
+function openAddStaffSheet(root: HTMLElement, m: Merchant): void {
+  const roleOpts = isSuper
+    ? [
+        { value: 'scanner', label: 'Scanner' },
+        { value: 'admin', label: 'Admin' },
+      ]
+    : [{ value: 'scanner', label: 'Scanner' }];
+  const { el, close } = openSheet(
+    `<div class="h">Add staff</div>
+     <div class="sub">${icon('store', { size: 14 })}Works at <b>${esc(m.name)}</b></div>
+     <div class="m-formstack">
+       ${field({ id: 'm-staff-id', label: 'Telegram ID', placeholder: 'e.g. 710244180', mono: true, numeric: true })}
+       <div><div class="label" style="margin-bottom:7px">Role</div>${segmented('staff-role', roleOpts, 'scanner')}</div>
+     </div>
+     <button class="m-mainbtn" id="m-staff-go">Add staff</button>`,
+  );
+  el.querySelector('#m-staff-go')!.addEventListener('click', async () => {
+    const tg = Number(el.querySelector<HTMLInputElement>('#m-staff-id')!.value.trim());
+    const role = segValue(el, 'staff-role');
+    if (!Number.isFinite(tg) || tg <= 0) {
+      toast({ title: 'Enter a valid Telegram ID', tone: 'danger' });
+      return;
+    }
     try {
-      await api.post(`/merchants/${activeMerchant}/members`, { telegram_id: tg, role });
+      await api.post(`/merchants/${m.id}/members`, { telegram_id: tg, role });
+      close();
       await loadStaff(root);
     } catch (err) {
-      alertMsg((err as Error).message);
+      close();
+      errToast(err);
     }
   });
 }
 
-// Per-merchant accrual rules for the active merchant. Lists/creates/deletes that
-// merchant's OWN rules only (globals are managed in the super-admin "All accrual
-// rules" panel). Visible to its admins and super-admins.
+// ---------------------------------------------------------------- Rules tab
 async function loadRules(root: HTMLElement): Promise<void> {
-  const card = root.querySelector<HTMLElement>('#rules-card');
-  const el = root.querySelector<HTMLElement>('#rules');
-  if (!card || !el) return;
-  const canManage = isSuper || activeRole() === 'admin';
-  if (!activeMerchant || !canManage) {
-    card.style.display = 'none';
+  const m = currentMerchant();
+  if (!m || !canManage()) {
+    setMainBar(root, '');
+    content(root).innerHTML = sectionLabel('Accrual rules') + emptyState('bolt', 'No merchant', 'Select a merchant you administer to manage its rules.');
     return;
   }
-  card.style.display = '';
+  setMainBar(root, `<button class="m-mainbtn" id="m-new-rule">${icon('plus', { size: 19, stroke: 1.8 })}New rule</button>`);
+  const el = content(root);
+  el.innerHTML = sectionLabel('Accrual rules') + skeleton('100%', 56, 8) + skeleton('100%', 56, 10);
   let rules: ManagedRule[] = [];
   try {
-    rules = (await api.get<{ rules: ManagedRule[] }>(`/merchants/${activeMerchant}/manage-rules`)).rules;
+    rules = (await api.get<{ rules: ManagedRule[] }>(`/merchants/${m.id}/manage-rules`)).rules;
   } catch {
     rules = [];
   }
-  el.innerHTML = `
-    <div class="muted">This merchant's own accrual rules. Global rules are available to every merchant but are managed by a super-admin.</div>
-    ${
-      rules.length
-        ? rules
-            .map(
-              (r) => `<div class="row">
-        <div>${esc(r.name)} <span class="muted">+${r.point_value}${r.daily_limit != null ? ` · max ${r.daily_limit}/day` : ''}${r.active ? '' : ' · inactive'}</span></div>
-        <button data-rule-toggle="${r.id}" data-active="${r.active ? '1' : '0'}">${r.active ? 'Deactivate' : 'Activate'}</button>
-      </div>`,
-            )
-            .join('')
-        : '<div class="muted">No rules yet</div>'
-    }
-    <fieldset><legend>Add rule</legend>
-      <input id="ru-name" placeholder="e.g. Visit" />
-      <input id="ru-points" placeholder="Points" inputmode="numeric" />
-      <input id="ru-limit" placeholder="Daily limit per customer" inputmode="numeric" />
-      <button id="ru-add">Add</button>
-    </fieldset>
-  `;
-  // Toggle active instead of deleting: a hard delete would cascade-wipe the rule's
-  // accrual history and reset daily-limit counts, so the merchant route soft-deletes.
-  el.querySelectorAll<HTMLButtonElement>('button[data-rule-toggle]').forEach((b) =>
+  if (activeTab !== 'rules' || activeMerchant !== m.id) return; // switched mid-load
+  el.innerHTML =
+    sectionLabel('Accrual rules', rules.length ? `${rules.length} ${rules.length === 1 ? 'rule' : 'rules'}` : undefined) +
+    `<div class="m-hint">Rules for <b>${esc(m.name)}</b>. Staff pick one when awarding points. Global rules (set by a super-admin) also apply.</div>` +
+    (rules.length
+      ? rules.map((r, i) => ruleRow(r, i === 0)).join('')
+      : emptyState('bolt', 'No rules yet', 'Create an accrual rule like Visit +50 so staff can award points.'));
+
+  root.querySelector('#m-new-rule')!.addEventListener('click', () => openNewRuleSheet(root, m));
+  wireRuleToggles(el, (id, active) => api.patch(`/merchants/${m.id}/rules/${id}`, { active }), () => loadRules(root));
+}
+
+function ruleRow(r: ManagedRule, first: boolean): string {
+  const meta = `+${r.point_value}${r.daily_limit != null ? ` · max ${r.daily_limit}/day` : ''}${r.active ? '' : ' · inactive'}`;
+  return `<div class="m-row${first ? ' first' : ''}">
+    <div class="grow"><div class="title">${esc(r.name)}</div><div class="sub">${meta}</div></div>
+    <span class="m-pill outline sm">+${r.point_value}</span>
+    <button class="m-pill line sm" data-toggle="${r.id}" data-active="${r.active ? '1' : '0'}">${r.active ? 'Deactivate' : 'Activate'}</button>
+  </div>`;
+}
+
+// Toggle active (never hard-delete: a delete would cascade-wipe accrual history
+// and reset daily-limit counts). Deactivation asks for confirmation.
+function wireRuleToggles(
+  el: HTMLElement,
+  patch: (id: string, active: boolean) => Promise<unknown>,
+  reload: () => Promise<void>,
+): void {
+  el.querySelectorAll<HTMLButtonElement>('[data-toggle]').forEach((b) =>
     b.addEventListener('click', async () => {
-      try {
-        await api.patch(`/merchants/${activeMerchant}/rules/${b.dataset.ruleToggle}`, {
-          active: b.dataset.active !== '1',
+      const id = b.dataset.toggle!;
+      const isActive = b.dataset.active === '1';
+      if (isActive) {
+        const ok = await openDialog({
+          title: 'Deactivate this rule?',
+          body: 'Staff can no longer award points with it. You can reactivate it anytime.',
+          confirmLabel: 'Deactivate',
+          tone: 'danger',
         });
-        await loadRules(root);
+        if (!ok) return;
+      }
+      try {
+        await patch(id, !isActive);
+        await reload();
       } catch (err) {
-        alertMsg((err as Error).message);
+        errToast(err);
       }
     }),
   );
-  el.querySelector('#ru-add')?.addEventListener('click', async () => {
-    const nameEl = root.querySelector<HTMLInputElement>('#ru-name')!;
-    const pointsEl = root.querySelector<HTMLInputElement>('#ru-points')!;
-    const limitEl = root.querySelector<HTMLInputElement>('#ru-limit')!;
-    const name = nameEl.value.trim();
-    const points = Number.parseInt(pointsEl.value.trim(), 10);
-    const limit = Number.parseInt(limitEl.value.trim(), 10);
-    if (!name) {
-      alertMsg('Enter a rule name');
-      return;
-    }
-    if (!Number.isFinite(points) || points <= 0) {
-      alertMsg('Points must be a positive number');
-      return;
-    }
-    if (!Number.isFinite(limit) || limit <= 0) {
-      alertMsg('Daily limit per customer is required (a positive number)');
-      return;
-    }
+}
+
+function openNewRuleSheet(root: HTMLElement, m: Merchant): void {
+  const { el, close } = openSheet(
+    `<div class="h" style="margin-bottom:18px">New accrual rule</div>
+     <div class="m-formstack">
+       ${field({ id: 'm-rule-name', label: 'Name', placeholder: 'e.g. Visit' })}
+       <div><div class="label" style="margin-bottom:7px">Points</div>${presetsFill([10, 20, 50, 100], 'm-rule-points', '+')}${field({ id: 'm-rule-points', placeholder: 'Points', numeric: true })}</div>
+       ${field({ id: 'm-rule-limit', label: 'Daily limit per customer (required)', placeholder: 'e.g. 1', numeric: true })}
+     </div>
+     <button class="m-mainbtn" id="m-rule-go">Create rule</button>`,
+  );
+  el.querySelector('#m-rule-go')!.addEventListener('click', async () => {
+    const name = el.querySelector<HTMLInputElement>('#m-rule-name')!.value.trim();
+    const points = Number.parseInt(el.querySelector<HTMLInputElement>('#m-rule-points')!.value.trim(), 10);
+    const limit = Number.parseInt(el.querySelector<HTMLInputElement>('#m-rule-limit')!.value.trim(), 10);
+    if (!name) return toast({ title: 'Enter a rule name', tone: 'danger' });
+    if (!Number.isFinite(points) || points <= 0) return toast({ title: 'Points must be a positive number', tone: 'danger' });
+    if (!Number.isFinite(limit) || limit <= 0) return toast({ title: 'A positive daily limit is required', tone: 'danger' });
     try {
-      await api.post(`/merchants/${activeMerchant}/manage-rules`, {
-        name,
-        kind: 'fixed',
-        point_value: points,
-        daily_limit: limit,
-      });
-      nameEl.value = '';
-      pointsEl.value = '';
-      limitEl.value = '';
+      await api.post(`/merchants/${m.id}/manage-rules`, { name, kind: 'fixed', point_value: points, daily_limit: limit });
+      close();
       await loadRules(root);
     } catch (err) {
-      alertMsg((err as Error).message);
+      close();
+      errToast(err);
     }
   });
 }
 
-function superAdminPanels(ms: Merchant[]): string {
-  const opts = ms.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
-  return `
-    <div class="card"><h3>Super-admin</h3>
-      <fieldset><legend>New merchant</legend>
-        <input id="m-name" placeholder="Name" />
-        <select id="m-type"><option>shop</option><option>cafe</option><option>event</option><option>community</option></select>
-        <button id="m-create">Create</button>
-      </fieldset>
-      <fieldset><legend>Add staff (any merchant)</legend>
-        <select id="mm-merchant">${opts}</select>
-        <input id="mm-tg" placeholder="telegram_id" inputmode="numeric" />
-        <select id="mm-role"><option>scanner</option><option>admin</option></select>
-        <button id="mm-add">Add</button>
-      </fieldset>
-      <fieldset><legend>Accrual rule</legend>
-        <input id="r-name" placeholder="e.g. Visit" />
-        <input id="r-points" placeholder="Points" inputmode="numeric" />
-        <input id="r-limit" placeholder="Daily limit (empty = none)" inputmode="numeric" />
-        <button id="r-create">Create (global)</button>
-      </fieldset>
-      <fieldset><legend>Reward</legend>
-        <input id="rw-title" placeholder="Title" />
-        <input id="rw-cost" placeholder="Cost" inputmode="numeric" />
-        <input id="rw-stock" placeholder="Stock (empty = ∞)" inputmode="numeric" />
-        <button id="rw-create">Create (global)</button>
-      </fieldset>
-    </div>
-    <div class="card"><h3>All accrual rules</h3><div id="all-rules">Loading…</div></div>`;
+// ---------------------------------------------------------------- Program tab (super)
+async function loadProgram(root: HTMLElement): Promise<void> {
+  setMainBar(root, '');
+  const el = content(root);
+  const actions = [
+    { ic: 'store', title: 'New merchant', sub: 'Shop, café or venue', act: 'merchant' },
+    { ic: 'people', title: 'Add staff to any merchant', sub: 'Scanner or admin by ID', act: 'staff' },
+    { ic: 'bolt', title: 'Global accrual rule', sub: 'Applies across merchants', act: 'rule' },
+    { ic: 'gift', title: 'Global reward', sub: 'Cost + optional stock', act: 'reward' },
+  ];
+  el.innerHTML =
+    sectionLabel('Program control') +
+    `<div class="m-stack">${actions
+      .map(
+        (a) =>
+          `<button class="m-program-action" data-prog="${a.act}">
+            <span class="badge">${icon(a.ic, { size: 20, stroke: 1.7 })}</span>
+            <span class="grow"><span class="title">${a.title}</span><span class="sub">${a.sub}</span></span>
+            ${icon('plus', { size: 18, stroke: 1.7 })}
+          </button>`,
+      )
+      .join('')}</div>` +
+    `<div class="m-spacer lg"></div>` +
+    sectionLabel('All accrual rules') +
+    `<div id="m-all-rules">${skeleton('100%', 56, 0)}${skeleton('100%', 56, 10)}</div>`;
+
+  el.querySelector('[data-prog="merchant"]')!.addEventListener('click', () => openNewMerchantSheet(root));
+  el.querySelector('[data-prog="staff"]')!.addEventListener('click', () => openAddStaffAnySheet());
+  el.querySelector('[data-prog="rule"]')!.addEventListener('click', () => openGlobalRuleSheet(root));
+  el.querySelector('[data-prog="reward"]')!.addEventListener('click', () => openGlobalRewardSheet());
+  await loadAllRules(root);
 }
 
-// Cross-merchant rule list for super-admins: every merchant's own rules + globals,
-// labeled with the owning merchant. Super-admins can activate/deactivate any rule
-// here (rules are deactivated, never hard-deleted, to preserve accrual history).
+// Cross-merchant rule list: every merchant's own rules + globals, labeled.
 async function loadAllRules(root: HTMLElement): Promise<void> {
-  const el = root.querySelector<HTMLElement>('#all-rules');
-  if (!el) return;
-  let rules: ManagedRule[] = [];
+  const host = root.querySelector<HTMLElement>('#m-all-rules');
+  if (!host) return;
+  let rules: ManagedRule[];
   try {
     rules = (await api.get<{ rules: ManagedRule[] }>('/admin/rules')).rules;
   } catch (err) {
-    el.innerHTML = `<div class="muted">${esc((err as Error).message)}</div>`;
+    host.innerHTML = `<div class="m-hint">${esc((err as Error).message)}</div>`;
     return;
   }
-  el.innerHTML = rules.length
+  host.innerHTML = rules.length
     ? rules
-        .map(
-          (r) => `<div class="row">
-        <div>${esc(r.name)} <span class="muted">+${r.point_value}${r.daily_limit != null ? ` · max ${r.daily_limit}/day` : ''}${r.active ? '' : ' · inactive'}</span>
-          <div class="muted">${r.merchant_id == null ? 'Global' : esc(r.merchant_name ?? 'merchant ' + r.merchant_id)}</div></div>
-        <button data-all-rule-toggle="${r.id}" data-active="${r.active ? '1' : '0'}">${r.active ? 'Deactivate' : 'Activate'}</button>
-      </div>`,
-        )
+        .map((r, i) => {
+          const owner = r.merchant_id == null ? 'Global' : esc(r.merchant_name ?? 'merchant ' + r.merchant_id);
+          const meta = `+${r.point_value}${r.daily_limit != null ? ` · max ${r.daily_limit}/day` : ''}${r.active ? '' : ' · inactive'}`;
+          return `<div class="m-row${i === 0 ? ' first' : ''}">
+            <div class="grow"><div class="title">${esc(r.name)}</div><div class="sub">${owner} · ${meta}</div></div>
+            <button class="m-pill line sm" data-toggle="${r.id}" data-active="${r.active ? '1' : '0'}">${r.active ? 'Deactivate' : 'Activate'}</button>
+          </div>`;
+        })
         .join('')
-    : '<div class="muted">No rules</div>';
-  el.querySelectorAll<HTMLButtonElement>('button[data-all-rule-toggle]').forEach((b) =>
-    b.addEventListener('click', async () => {
-      try {
-        await api.patch(`/admin/rules/${b.dataset.allRuleToggle}`, { active: b.dataset.active !== '1' });
-        await loadAllRules(root);
-      } catch (err) {
-        alertMsg((err as Error).message);
-      }
+    : `<div class="m-hint">No rules yet.</div>`;
+  wireRuleToggles(host, (id, active) => api.patch(`/admin/rules/${id}`, { active }), () => loadAllRules(root));
+}
+
+function openNewMerchantSheet(root: HTMLElement): void {
+  const { el, close } = openSheet(
+    `<div class="h" style="margin-bottom:18px">New merchant</div>
+     <div class="m-formstack">
+       ${field({ id: 'm-merch-name', label: 'Name', placeholder: 'e.g. Capulus Coffee' })}
+       <div><div class="label" style="margin-bottom:7px">Type</div>${segmented(
+         'merch-type',
+         [
+           { value: 'shop', label: 'Shop' },
+           { value: 'cafe', label: 'Café' },
+           { value: 'event', label: 'Event' },
+           { value: 'community', label: 'Community' },
+         ],
+         'cafe',
+       )}</div>
+     </div>
+     <button class="m-mainbtn" id="m-merch-go">Create merchant</button>`,
+  );
+  el.querySelector('#m-merch-go')!.addEventListener('click', async () => {
+    const name = el.querySelector<HTMLInputElement>('#m-merch-name')!.value.trim();
+    if (!name) return toast({ title: 'Enter a merchant name', tone: 'danger' });
+    try {
+      await api.post('/admin/merchants', { name, type: segValue(el, 'merch-type') });
+      close();
+      toast({ title: 'Merchant created', sub: 'Reopen the app to manage it as a counter.', tone: 'success' });
+      await loadProgram(root);
+    } catch (err) {
+      close();
+      errToast(err);
+    }
+  });
+}
+
+function openAddStaffAnySheet(): void {
+  const pickList = merchants
+    .map(
+      (m, i) =>
+        `<button class="m-pick${i === 0 ? ' active' : ''}" data-id="${m.id}">${icon('store', { size: 18 })}<span class="grow">${esc(m.name)}</span></button>`,
+    )
+    .join('');
+  const noMerchants = merchants.length === 0;
+  const { el, close } = openSheet(
+    `<div class="h" style="margin-bottom:18px">Add staff to any merchant</div>
+     <div class="m-formstack">
+       ${
+         noMerchants
+           ? `<div class="m-hint">You're not a member of any merchant yet — create one first, then reopen the app.</div>`
+           : `<div><div class="label" style="margin-bottom:7px">Merchant</div><div class="m-pick-list" id="m-any-merchants">${pickList}</div></div>`
+       }
+       ${field({ id: 'm-any-id', label: 'Telegram ID', placeholder: 'e.g. 710244180', mono: true, numeric: true })}
+       <div><div class="label" style="margin-bottom:7px">Role</div>${segmented(
+         'any-role',
+         [
+           { value: 'scanner', label: 'Scanner' },
+           { value: 'admin', label: 'Admin' },
+         ],
+         'scanner',
+       )}</div>
+     </div>
+     <button class="m-mainbtn" id="m-any-go"${noMerchants ? ' disabled' : ''}>Add staff</button>`,
+  );
+  // Single-select the merchant pick-list.
+  el.querySelectorAll<HTMLButtonElement>('#m-any-merchants .m-pick').forEach((b) =>
+    b.addEventListener('click', () => {
+      el.querySelectorAll('#m-any-merchants .m-pick').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
     }),
   );
+  el.querySelector('#m-any-go')!.addEventListener('click', async () => {
+    const picked = el.querySelector<HTMLElement>('#m-any-merchants .m-pick.active');
+    const merchantId = picked?.dataset.id;
+    const tg = Number(el.querySelector<HTMLInputElement>('#m-any-id')!.value.trim());
+    if (!merchantId) return toast({ title: 'Pick a merchant', tone: 'danger' });
+    if (!Number.isFinite(tg) || tg <= 0) return toast({ title: 'Enter a valid Telegram ID', tone: 'danger' });
+    try {
+      await api.post(`/admin/merchants/${merchantId}/members`, { telegram_id: tg, role: segValue(el, 'any-role') });
+      close();
+      toast({ title: 'Staff added', tone: 'success' });
+    } catch (err) {
+      close();
+      errToast(err);
+    }
+  });
 }
 
-function wireSuperAdmin(root: HTMLElement): void {
-  const val = (id: string) => root.querySelector<HTMLInputElement | HTMLSelectElement>(id)!.value.trim();
-  const intOrNull = (v: string) => (v === '' ? null : Number.parseInt(v, 10));
-
-  void loadAllRules(root);
-
-  root.querySelector('#m-create')?.addEventListener('click', () =>
-    submit(() => api.post('/admin/merchants', { name: val('#m-name'), type: val('#m-type') }), root),
+function openGlobalRuleSheet(root: HTMLElement): void {
+  const { el, close } = openSheet(
+    `<div class="h" style="margin-bottom:18px">Global accrual rule</div>
+     <div class="m-formstack">
+       ${field({ id: 'm-grule-name', label: 'Name', placeholder: 'e.g. Visit' })}
+       <div><div class="label" style="margin-bottom:7px">Points</div>${presetsFill([10, 20, 50, 100], 'm-grule-points', '+')}${field({ id: 'm-grule-points', placeholder: 'Points', numeric: true })}</div>
+       ${field({ id: 'm-grule-limit', label: 'Daily limit per customer (optional)', placeholder: 'No limit', numeric: true })}
+     </div>
+     <button class="m-mainbtn" id="m-grule-go">Create global rule</button>`,
   );
-  root.querySelector('#mm-add')?.addEventListener('click', () =>
-    submit(
-      () =>
-        api.post(`/admin/merchants/${val('#mm-merchant')}/members`, {
-          telegram_id: Number(val('#mm-tg')),
-          role: val('#mm-role'),
-        }),
-      root,
-    ),
-  );
-  root.querySelector('#r-create')?.addEventListener('click', () =>
-    submit(
-      () =>
-        api.post('/admin/rules', {
-          name: val('#r-name'),
-          kind: 'fixed',
-          point_value: Number(val('#r-points')),
-          daily_limit: intOrNull(val('#r-limit')),
-        }),
-      root,
-    ),
-  );
-  root.querySelector('#rw-create')?.addEventListener('click', () =>
-    submit(
-      () =>
-        api.post('/admin/rewards', {
-          title: val('#rw-title'),
-          cost: Number(val('#rw-cost')),
-          stock: intOrNull(val('#rw-stock')),
-        }),
-      root,
-    ),
-  );
+  el.querySelector('#m-grule-go')!.addEventListener('click', async () => {
+    const name = el.querySelector<HTMLInputElement>('#m-grule-name')!.value.trim();
+    const points = Number.parseInt(el.querySelector<HTMLInputElement>('#m-grule-points')!.value.trim(), 10);
+    const limitRaw = el.querySelector<HTMLInputElement>('#m-grule-limit')!.value.trim();
+    const limit = limitRaw === '' ? null : Number.parseInt(limitRaw, 10);
+    if (!name) return toast({ title: 'Enter a rule name', tone: 'danger' });
+    if (!Number.isFinite(points) || points <= 0) return toast({ title: 'Points must be a positive number', tone: 'danger' });
+    if (limit !== null && (!Number.isFinite(limit) || limit <= 0)) return toast({ title: 'Daily limit must be a positive number', tone: 'danger' });
+    try {
+      await api.post('/admin/rules', { name, kind: 'fixed', point_value: points, daily_limit: limit });
+      close();
+      toast({ title: 'Global rule created', tone: 'success' });
+      await loadAllRules(root);
+    } catch (err) {
+      close();
+      errToast(err);
+    }
+  });
 }
 
-async function submit(fn: () => Promise<unknown>, root: HTMLElement): Promise<void> {
-  try {
-    await fn();
-    alertMsg('Done');
-    await renderAdmin(root);
-  } catch (err) {
-    alertMsg((err as Error).message);
-  }
-}
-
-function esc(s: string): string {
-  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+function openGlobalRewardSheet(): void {
+  const { el, close } = openSheet(
+    `<div class="h" style="margin-bottom:18px">Global reward</div>
+     <div class="m-formstack">
+       ${field({ id: 'm-rw-title', label: 'Title', placeholder: 'e.g. Specialty coffee' })}
+       <div><div class="label" style="margin-bottom:7px">Cost</div>${presetsFill([120, 200, 300], 'm-rw-cost')}${field({ id: 'm-rw-cost', placeholder: 'Cost in points', numeric: true })}</div>
+       ${field({ id: 'm-rw-stock', label: 'Stock (optional)', placeholder: 'Unlimited', numeric: true })}
+     </div>
+     <button class="m-mainbtn" id="m-rw-go">Publish reward</button>`,
+  );
+  el.querySelector('#m-rw-go')!.addEventListener('click', async () => {
+    const title = el.querySelector<HTMLInputElement>('#m-rw-title')!.value.trim();
+    const cost = Number.parseInt(el.querySelector<HTMLInputElement>('#m-rw-cost')!.value.trim(), 10);
+    const stockRaw = el.querySelector<HTMLInputElement>('#m-rw-stock')!.value.trim();
+    const stock = stockRaw === '' ? null : Number.parseInt(stockRaw, 10);
+    if (!title) return toast({ title: 'Enter a reward title', tone: 'danger' });
+    if (!Number.isFinite(cost) || cost <= 0) return toast({ title: 'Cost must be a positive number', tone: 'danger' });
+    if (stock !== null && (!Number.isFinite(stock) || stock < 0)) return toast({ title: 'Stock must be zero or more', tone: 'danger' });
+    try {
+      await api.post('/admin/rewards', { title, cost, stock });
+      close();
+      toast({ title: 'Reward published', tone: 'success' });
+    } catch (err) {
+      close();
+      errToast(err);
+    }
+  });
 }
