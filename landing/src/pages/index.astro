@@ -1,11 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
 import PhoneFrame from '../components/PhoneFrame.astro';
-import AppMain from '../components/app/AppMain.astro';
-import AppRewards from '../components/app/AppRewards.astro';
-import AppEarned from '../components/app/AppEarned.astro';
-import SuperAdminPanel from '../components/admin/SuperAdminPanel.astro';
-import MerchantPanel from '../components/admin/MerchantPanel.astro';
 
 const TG_APP = 'https://t.me/mctl_rewards_bot/app';
 const title = 'MCTL Rewards — Community loyalty in Telegram';
@@ -96,11 +91,15 @@ const description =
       </p>
       <div class="opsphones">
         <figure>
-          <PhoneFrame w={268}><SuperAdminPanel /></PhoneFrame>
+          <PhoneFrame w={268}>
+            <img class="mck-shot" src="/screens/admin-program.png" alt="Super-admin Program tab: create merchants, rules and rewards, and every accrual rule in one list" width="780" height="1622" loading="lazy" />
+          </PhoneFrame>
           <figcaption>Super-admin · program setup</figcaption>
         </figure>
         <figure>
-          <PhoneFrame w={268}><MerchantPanel /></PhoneFrame>
+          <PhoneFrame w={268}>
+            <img class="mck-shot" src="/screens/admin-scan.png" alt="Merchant-admin Scan tab: pick the merchant and tap Scan to award" width="780" height="1622" loading="lazy" />
+          </PhoneFrame>
           <figcaption>Merchant · the counter</figcaption>
         </figure>
       </div>
@@ -136,15 +135,21 @@ const description =
       <h2 class="h2">Quietly native to Telegram</h2>
       <div class="phones">
         <figure>
-          <PhoneFrame w={224}><AppRewards /></PhoneFrame>
+          <PhoneFrame w={224}>
+            <img class="mck-shot" src="/screens/app-rewards.png" alt="Rewards catalog with point costs" width="780" height="1622" loading="lazy" />
+          </PhoneFrame>
           <figcaption>Rewards catalog</figcaption>
         </figure>
         <figure>
-          <PhoneFrame w={256}><AppMain /></PhoneFrame>
+          <PhoneFrame w={256}>
+            <img class="mck-shot" src="/screens/app-qr.png" alt="Points balance and the single-use rotating QR" width="780" height="1622" loading="lazy" />
+          </PhoneFrame>
           <figcaption>Your rotating QR</figcaption>
         </figure>
         <figure>
-          <PhoneFrame w={224}><AppEarned /></PhoneFrame>
+          <PhoneFrame w={224}>
+            <img class="mck-shot" src="/screens/app-history.png" alt="Earn and spend history across merchants" width="780" height="1622" loading="lazy" />
+          </PhoneFrame>
           <figcaption>Points &amp; history</figcaption>
         </figure>
       </div>
