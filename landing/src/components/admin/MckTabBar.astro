@@ -1,0 +1,46 @@
+---
+// Bottom tab bar for the admin Mini App mockups. Mirrors the real app's
+// role-based nav: scanner (scan, requests) / merchant-admin (+staff, rules) /
+// super-admin (+program). `tabs` is a list of keys in display order; `active`
+// is the highlighted one. Icons are inline SVGs matching the live Lucide set.
+interface Props {
+  tabs: string[];
+  active: string;
+}
+const { tabs, active } = Astro.props;
+const LABEL: Record<string, string> = {
+  scan: 'Scan',
+  requests: 'Requests',
+  staff: 'Staff',
+  rules: 'Rules',
+  program: 'Program',
+};
+const ICON: Record<string, string> = {
+  scan: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 21v.01M21 17v.01M17 21v.01"/>',
+  requests: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  staff: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  rules: '<path d="M13 2 3 14h9l-1 8 10-12h-9z"/>',
+  program: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
+};
+---
+
+<nav class="mck-tabbar">
+  {
+    tabs.map((key) => (
+      <span class={`mck-tab${key === active ? ' active' : ''}`}>
+        <svg
+          width="19"
+          height="19"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          set:html={ICON[key]}
+        />
+        <span>{LABEL[key]}</span>
+      </span>
+    ))
+  }
+</nav>
