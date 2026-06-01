@@ -5,12 +5,25 @@
 
 import { haptic } from './tg.js';
 
-/** Escape text for safe interpolation into innerHTML. */
+/** Escape text for safe interpolation into innerHTML (double- and single-quote safe). */
 export function esc(s: string): string {
   return s.replace(
-    /[&<>"]/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!,
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
   );
+}
+
+/**
+ * Run an async submit handler at most once at a time: disable the button while
+ * the work is in flight (re-enabling when it settles), so a rapid double-tap on
+ * a sheet's confirm button can't fire a non-idempotent mutation twice.
+ */
+export function submitOnce(btn: HTMLButtonElement, fn: () => Promise<void>): void {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  void fn().finally(() => {
+    btn.disabled = false;
+  });
 }
 
 // ---------------------------------------------------------------- icons

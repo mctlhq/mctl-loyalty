@@ -3,7 +3,7 @@
 // scroll content. Roles: scanner (2 tabs) / merchant-admin (4) / super (5).
 // All backend contracts are unchanged from the previous implementation.
 import { api } from './api.js';
-import { scanQr, startMerchantId } from './tg.js';
+import { scanQr, startMerchantId, showBackButton } from './tg.js';
 import {
   esc,
   icon,
@@ -19,6 +19,7 @@ import {
   openDialog,
   toast,
   closeOverlays,
+  submitOnce,
 } from './ui.js';
 
 interface Me {
@@ -92,6 +93,20 @@ let activeMerchant: number | null = null;
 let activeTab: Tab = 'scan';
 let requestsFilter = 'all';
 let deepLinkApplied = false; // apply a `startapp=merchant_<id>` preselect at most once
+let backCleanup: (() => void) | null = null;
+
+// SPA navigation (reuses main.ts's popstate route handler).
+function navigateTo(path: string): void {
+  history.pushState({}, '', path);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+// Hide the native BackButton + detach its handler when leaving /admin. Called
+// from main.ts on every route change (no-op when nothing is wired).
+export function teardownAdmin(): void {
+  backCleanup?.();
+  backCleanup = null;
+}
 
 function activeRole(): string | null {
   return merchants.find((m) => m.id === activeMerchant)?.role ?? null;
@@ -119,14 +134,22 @@ function errToast(err: unknown): void {
 
 export async function renderAdmin(root: HTMLElement): Promise<void> {
   closeOverlays();
-  const me = await api.get<Me>('/me');
+  // /me and /staff/merchants are independent — issue them together.
+  const [me, mResp] = await Promise.all([
+    api.get<Me>('/me'),
+    api.get<{ merchants: Merchant[] }>('/staff/merchants'),
+  ]);
   isSuper = me.super_admin;
-  merchants = (await api.get<{ merchants: Merchant[] }>('/staff/merchants')).merchants;
+  merchants = mResp.merchants;
 
   if (!merchants.length && !isSuper) {
     renderNoAccess(root);
     return;
   }
+  // Telegram has no browser chrome, so wire the native BackButton back to the
+  // member profile (no-op outside Telegram, where the in-shell links suffice).
+  teardownAdmin();
+  backCleanup = showBackButton(() => navigateTo('/app'));
   // Deep-link preselect: focus a merchant opened via a Direct Link, once per
   // session, so manual switches stick afterwards.
   const startId = startMerchantId();
@@ -145,6 +168,20 @@ export async function renderAdmin(root: HTMLElement): Promise<void> {
       <nav class="m-tabbar" id="m-tabbar"></nav>
     </div>`;
   renderTabBar(root);
+  await applyTab(root);
+}
+
+// Re-fetch the merchant list and re-render the current tab. Used after creating
+// a merchant so dependent UI (counter switcher, "add staff to any" picker) is
+// current within the same session.
+async function refreshMerchants(root: HTMLElement): Promise<void> {
+  try {
+    merchants = (await api.get<{ merchants: Merchant[] }>('/staff/merchants')).merchants;
+  } catch (err) {
+    errToast(err);
+    return;
+  }
+  if (activeMerchant === null && merchants.length) activeMerchant = merchants[0]!.id;
   await applyTab(root);
 }
 
@@ -243,7 +280,11 @@ function renderScanTab(root: HTMLElement): void {
       <div class="frame">${icon('qr', { size: 42, stroke: 1.5 })}</div>
       <div class="h">Ready to scan</div>
       <div class="p">Tap <b>Scan to award</b>, point at the member's rotating QR, then pick an accrual rule. Points credit instantly.</div>
-    </div></div>`;
+    </div></div>
+    <div class="links" style="margin-top:18px;justify-content:center">
+      <a class="link" href="/app">← My profile</a>
+      <a class="link" href="/docs">Help &amp; guide</a>
+    </div>`;
   setMainBar(
     root,
     `<button class="m-mainbtn secondary" id="m-scan-redeem">Scan redemption</button>
@@ -255,7 +296,7 @@ function renderScanTab(root: HTMLElement): void {
       .addEventListener('click', () => openMerchantSheet(root));
   }
   root.querySelector('#m-scan-award')!.addEventListener('click', () => void doScanAward(root));
-  root.querySelector('#m-scan-redeem')!.addEventListener('click', () => void doRedeemScan(root));
+  root.querySelector('#m-scan-redeem')!.addEventListener('click', () => void doRedeemScan());
 }
 
 function openMerchantSheet(root: HTMLElement): void {
@@ -323,22 +364,25 @@ function openAwardConfirm(root: HTMLElement, token: string, rule: Rule): void {
      <div class="sub" style="margin-top:8px">Rule <b>${esc(rule.name)}</b>${rule.daily_limit != null ? ` · max ${rule.daily_limit}/day` : ''}. Points credit immediately and the member gets a Telegram notification.</div>
      <button class="m-mainbtn" id="m-award-go">Award +${rule.point_value} pts</button>`,
   );
-  el.querySelector('#m-award-go')!.addEventListener('click', async () => {
-    try {
-      const r = await api.post<{ delta: number; balance: number }>(`/merchants/${activeMerchant}/scan`, {
-        token,
-        rule_id: rule.id,
-      });
-      close();
-      toast({ title: `Awarded +${r.delta}`, sub: `Member balance: ${r.balance}`, tone: 'success' });
-    } catch (err) {
-      close();
-      errToast(err);
-    }
-  });
+  const go = el.querySelector<HTMLButtonElement>('#m-award-go')!;
+  go.addEventListener('click', () =>
+    submitOnce(go, async () => {
+      try {
+        const r = await api.post<{ delta: number; balance: number }>(`/merchants/${activeMerchant}/scan`, {
+          token,
+          rule_id: rule.id,
+        });
+        close();
+        toast({ title: `Awarded +${r.delta}`, sub: `Member balance: ${r.balance}`, tone: 'success' });
+      } catch (err) {
+        close();
+        errToast(err);
+      }
+    }),
+  );
 }
 
-async function doRedeemScan(root: HTMLElement): Promise<void> {
+async function doRedeemScan(): Promise<void> {
   if (!activeMerchant) return;
   const token = await scanQr();
   if (!token) return;
@@ -348,7 +392,7 @@ async function doRedeemScan(root: HTMLElement): Promise<void> {
       { token },
     );
     toast({ title: `Fulfilled: ${r.rewardTitle}`, sub: `−${r.cost} points`, tone: 'success' });
-    if (activeTab === 'requests') await loadRequests(root);
+    // The Requests tab re-fetches on entry (applyTab), so no refresh needed here.
   } catch (err) {
     errToast(err);
   }
@@ -429,21 +473,24 @@ function openFulfillSheet(root: HTMLElement, id: number): void {
      <div class="m-formstack">${field({ id: 'm-fulfill-reason', label: 'Reason (required)', placeholder: 'e.g. handed over in person' })}</div>
      <button class="m-mainbtn" id="m-fulfill-go">Mark fulfilled</button>`,
   );
-  el.querySelector('#m-fulfill-go')!.addEventListener('click', async () => {
-    const reason = el.querySelector<HTMLInputElement>('#m-fulfill-reason')!.value.trim();
-    if (!reason) {
-      toast({ title: 'A reason is required', tone: 'danger' });
-      return;
-    }
-    try {
-      await api.post(`/redemptions/${id}/fulfill`, { reason });
-      close();
-      await loadRequests(root);
-    } catch (err) {
-      close();
-      errToast(err);
-    }
-  });
+  const go = el.querySelector<HTMLButtonElement>('#m-fulfill-go')!;
+  go.addEventListener('click', () =>
+    submitOnce(go, async () => {
+      const reason = el.querySelector<HTMLInputElement>('#m-fulfill-reason')!.value.trim();
+      if (!reason) {
+        toast({ title: 'A reason is required', tone: 'danger' });
+        return;
+      }
+      try {
+        await api.post(`/redemptions/${id}/fulfill`, { reason });
+        close();
+        await loadRequests(root);
+      } catch (err) {
+        close();
+        errToast(err);
+      }
+    }),
+  );
 }
 
 // ---------------------------------------------------------------- Staff tab
@@ -460,8 +507,10 @@ async function loadStaff(root: HTMLElement): Promise<void> {
   let members: Member[] = [];
   try {
     members = (await api.get<{ members: Member[] }>(`/merchants/${m.id}/members`)).members;
-  } catch {
-    members = [];
+  } catch (err) {
+    if (activeTab !== 'staff' || activeMerchant !== m.id) return;
+    el.innerHTML = sectionLabel('Staff') + emptyState('alert', "Couldn't load staff", (err as Error).message);
+    return;
   }
   if (activeTab !== 'staff' || activeMerchant !== m.id) return; // switched mid-load
   el.innerHTML =
@@ -518,22 +567,25 @@ function openAddStaffSheet(root: HTMLElement, m: Merchant): void {
      </div>
      <button class="m-mainbtn" id="m-staff-go">Add staff</button>`,
   );
-  el.querySelector('#m-staff-go')!.addEventListener('click', async () => {
-    const tg = Number(el.querySelector<HTMLInputElement>('#m-staff-id')!.value.trim());
-    const role = segValue(el, 'staff-role');
-    if (!Number.isFinite(tg) || tg <= 0) {
-      toast({ title: 'Enter a valid Telegram ID', tone: 'danger' });
-      return;
-    }
-    try {
-      await api.post(`/merchants/${m.id}/members`, { telegram_id: tg, role });
-      close();
-      await loadStaff(root);
-    } catch (err) {
-      close();
-      errToast(err);
-    }
-  });
+  const go = el.querySelector<HTMLButtonElement>('#m-staff-go')!;
+  go.addEventListener('click', () =>
+    submitOnce(go, async () => {
+      const tg = Number.parseInt(el.querySelector<HTMLInputElement>('#m-staff-id')!.value.trim(), 10);
+      const role = segValue(el, 'staff-role');
+      if (!Number.isFinite(tg) || tg <= 0) {
+        toast({ title: 'Enter a valid Telegram ID', tone: 'danger' });
+        return;
+      }
+      try {
+        await api.post(`/merchants/${m.id}/members`, { telegram_id: tg, role });
+        close();
+        await loadStaff(root);
+      } catch (err) {
+        close();
+        errToast(err);
+      }
+    }),
+  );
 }
 
 // ---------------------------------------------------------------- Rules tab
@@ -550,8 +602,10 @@ async function loadRules(root: HTMLElement): Promise<void> {
   let rules: ManagedRule[] = [];
   try {
     rules = (await api.get<{ rules: ManagedRule[] }>(`/merchants/${m.id}/manage-rules`)).rules;
-  } catch {
-    rules = [];
+  } catch (err) {
+    if (activeTab !== 'rules' || activeMerchant !== m.id) return;
+    el.innerHTML = sectionLabel('Accrual rules') + emptyState('alert', "Couldn't load rules", (err as Error).message);
+    return;
   }
   if (activeTab !== 'rules' || activeMerchant !== m.id) return; // switched mid-load
   el.innerHTML =
@@ -614,22 +668,25 @@ function openNewRuleSheet(root: HTMLElement, m: Merchant): void {
      </div>
      <button class="m-mainbtn" id="m-rule-go">Create rule</button>`,
   );
-  el.querySelector('#m-rule-go')!.addEventListener('click', async () => {
-    const name = el.querySelector<HTMLInputElement>('#m-rule-name')!.value.trim();
-    const points = Number.parseInt(el.querySelector<HTMLInputElement>('#m-rule-points')!.value.trim(), 10);
-    const limit = Number.parseInt(el.querySelector<HTMLInputElement>('#m-rule-limit')!.value.trim(), 10);
-    if (!name) return toast({ title: 'Enter a rule name', tone: 'danger' });
-    if (!Number.isFinite(points) || points <= 0) return toast({ title: 'Points must be a positive number', tone: 'danger' });
-    if (!Number.isFinite(limit) || limit <= 0) return toast({ title: 'A positive daily limit is required', tone: 'danger' });
-    try {
-      await api.post(`/merchants/${m.id}/manage-rules`, { name, kind: 'fixed', point_value: points, daily_limit: limit });
-      close();
-      await loadRules(root);
-    } catch (err) {
-      close();
-      errToast(err);
-    }
-  });
+  const go = el.querySelector<HTMLButtonElement>('#m-rule-go')!;
+  go.addEventListener('click', () =>
+    submitOnce(go, async () => {
+      const name = el.querySelector<HTMLInputElement>('#m-rule-name')!.value.trim();
+      const points = Number.parseInt(el.querySelector<HTMLInputElement>('#m-rule-points')!.value.trim(), 10);
+      const limit = Number.parseInt(el.querySelector<HTMLInputElement>('#m-rule-limit')!.value.trim(), 10);
+      if (!name) return toast({ title: 'Enter a rule name', tone: 'danger' });
+      if (!Number.isFinite(points) || points <= 0) return toast({ title: 'Points must be a positive number', tone: 'danger' });
+      if (!Number.isFinite(limit) || limit <= 0) return toast({ title: 'A positive daily limit is required', tone: 'danger' });
+      try {
+        await api.post(`/merchants/${m.id}/manage-rules`, { name, kind: 'fixed', point_value: points, daily_limit: limit });
+        close();
+        await loadRules(root);
+      } catch (err) {
+        close();
+        errToast(err);
+      }
+    }),
+  );
 }
 
 // ---------------------------------------------------------------- Program tab (super)
@@ -709,19 +766,25 @@ function openNewMerchantSheet(root: HTMLElement): void {
      </div>
      <button class="m-mainbtn" id="m-merch-go">Create merchant</button>`,
   );
-  el.querySelector('#m-merch-go')!.addEventListener('click', async () => {
-    const name = el.querySelector<HTMLInputElement>('#m-merch-name')!.value.trim();
-    if (!name) return toast({ title: 'Enter a merchant name', tone: 'danger' });
-    try {
-      await api.post('/admin/merchants', { name, type: segValue(el, 'merch-type') });
-      close();
-      toast({ title: 'Merchant created', sub: 'Reopen the app to manage it as a counter.', tone: 'success' });
-      await loadProgram(root);
-    } catch (err) {
-      close();
-      errToast(err);
-    }
-  });
+  const go = el.querySelector<HTMLButtonElement>('#m-merch-go')!;
+  go.addEventListener('click', () =>
+    submitOnce(go, async () => {
+      const name = el.querySelector<HTMLInputElement>('#m-merch-name')!.value.trim();
+      if (!name) return toast({ title: 'Enter a merchant name', tone: 'danger' });
+      try {
+        await api.post('/admin/merchants', { name, type: segValue(el, 'merch-type') });
+        close();
+        toast({ title: 'Merchant created', tone: 'success' });
+        // Re-fetch so the new merchant appears in the counter switcher and the
+        // "Add staff to any merchant" picker within this same session (super-admins
+        // see all active merchants via /staff/merchants).
+        await refreshMerchants(root);
+      } catch (err) {
+        close();
+        errToast(err);
+      }
+    }),
+  );
 }
 
 function openAddStaffAnySheet(): void {
@@ -759,21 +822,24 @@ function openAddStaffAnySheet(): void {
       b.classList.add('active');
     }),
   );
-  el.querySelector('#m-any-go')!.addEventListener('click', async () => {
-    const picked = el.querySelector<HTMLElement>('#m-any-merchants .m-pick.active');
-    const merchantId = picked?.dataset.id;
-    const tg = Number(el.querySelector<HTMLInputElement>('#m-any-id')!.value.trim());
-    if (!merchantId) return toast({ title: 'Pick a merchant', tone: 'danger' });
-    if (!Number.isFinite(tg) || tg <= 0) return toast({ title: 'Enter a valid Telegram ID', tone: 'danger' });
-    try {
-      await api.post(`/admin/merchants/${merchantId}/members`, { telegram_id: tg, role: segValue(el, 'any-role') });
-      close();
-      toast({ title: 'Staff added', tone: 'success' });
-    } catch (err) {
-      close();
-      errToast(err);
-    }
-  });
+  const go = el.querySelector<HTMLButtonElement>('#m-any-go')!;
+  go.addEventListener('click', () =>
+    submitOnce(go, async () => {
+      const picked = el.querySelector<HTMLElement>('#m-any-merchants .m-pick.active');
+      const merchantId = picked?.dataset.id;
+      const tg = Number.parseInt(el.querySelector<HTMLInputElement>('#m-any-id')!.value.trim(), 10);
+      if (!merchantId) return toast({ title: 'Pick a merchant', tone: 'danger' });
+      if (!Number.isFinite(tg) || tg <= 0) return toast({ title: 'Enter a valid Telegram ID', tone: 'danger' });
+      try {
+        await api.post(`/admin/merchants/${merchantId}/members`, { telegram_id: tg, role: segValue(el, 'any-role') });
+        close();
+        toast({ title: 'Staff added', tone: 'success' });
+      } catch (err) {
+        close();
+        errToast(err);
+      }
+    }),
+  );
 }
 
 function openGlobalRuleSheet(root: HTMLElement): void {
@@ -786,24 +852,27 @@ function openGlobalRuleSheet(root: HTMLElement): void {
      </div>
      <button class="m-mainbtn" id="m-grule-go">Create global rule</button>`,
   );
-  el.querySelector('#m-grule-go')!.addEventListener('click', async () => {
-    const name = el.querySelector<HTMLInputElement>('#m-grule-name')!.value.trim();
-    const points = Number.parseInt(el.querySelector<HTMLInputElement>('#m-grule-points')!.value.trim(), 10);
-    const limitRaw = el.querySelector<HTMLInputElement>('#m-grule-limit')!.value.trim();
-    const limit = limitRaw === '' ? null : Number.parseInt(limitRaw, 10);
-    if (!name) return toast({ title: 'Enter a rule name', tone: 'danger' });
-    if (!Number.isFinite(points) || points <= 0) return toast({ title: 'Points must be a positive number', tone: 'danger' });
-    if (limit !== null && (!Number.isFinite(limit) || limit <= 0)) return toast({ title: 'Daily limit must be a positive number', tone: 'danger' });
-    try {
-      await api.post('/admin/rules', { name, kind: 'fixed', point_value: points, daily_limit: limit });
-      close();
-      toast({ title: 'Global rule created', tone: 'success' });
-      await loadAllRules(root);
-    } catch (err) {
-      close();
-      errToast(err);
-    }
-  });
+  const go = el.querySelector<HTMLButtonElement>('#m-grule-go')!;
+  go.addEventListener('click', () =>
+    submitOnce(go, async () => {
+      const name = el.querySelector<HTMLInputElement>('#m-grule-name')!.value.trim();
+      const points = Number.parseInt(el.querySelector<HTMLInputElement>('#m-grule-points')!.value.trim(), 10);
+      const limitRaw = el.querySelector<HTMLInputElement>('#m-grule-limit')!.value.trim();
+      const limit = limitRaw === '' ? null : Number.parseInt(limitRaw, 10);
+      if (!name) return toast({ title: 'Enter a rule name', tone: 'danger' });
+      if (!Number.isFinite(points) || points <= 0) return toast({ title: 'Points must be a positive number', tone: 'danger' });
+      if (limit !== null && (!Number.isFinite(limit) || limit <= 0)) return toast({ title: 'Daily limit must be a positive number', tone: 'danger' });
+      try {
+        await api.post('/admin/rules', { name, kind: 'fixed', point_value: points, daily_limit: limit });
+        close();
+        toast({ title: 'Global rule created', tone: 'success' });
+        await loadAllRules(root);
+      } catch (err) {
+        close();
+        errToast(err);
+      }
+    }),
+  );
 }
 
 function openGlobalRewardSheet(): void {
@@ -816,21 +885,24 @@ function openGlobalRewardSheet(): void {
      </div>
      <button class="m-mainbtn" id="m-rw-go">Publish reward</button>`,
   );
-  el.querySelector('#m-rw-go')!.addEventListener('click', async () => {
-    const title = el.querySelector<HTMLInputElement>('#m-rw-title')!.value.trim();
-    const cost = Number.parseInt(el.querySelector<HTMLInputElement>('#m-rw-cost')!.value.trim(), 10);
-    const stockRaw = el.querySelector<HTMLInputElement>('#m-rw-stock')!.value.trim();
-    const stock = stockRaw === '' ? null : Number.parseInt(stockRaw, 10);
-    if (!title) return toast({ title: 'Enter a reward title', tone: 'danger' });
-    if (!Number.isFinite(cost) || cost <= 0) return toast({ title: 'Cost must be a positive number', tone: 'danger' });
-    if (stock !== null && (!Number.isFinite(stock) || stock < 0)) return toast({ title: 'Stock must be zero or more', tone: 'danger' });
-    try {
-      await api.post('/admin/rewards', { title, cost, stock });
-      close();
-      toast({ title: 'Reward published', tone: 'success' });
-    } catch (err) {
-      close();
-      errToast(err);
-    }
-  });
+  const go = el.querySelector<HTMLButtonElement>('#m-rw-go')!;
+  go.addEventListener('click', () =>
+    submitOnce(go, async () => {
+      const title = el.querySelector<HTMLInputElement>('#m-rw-title')!.value.trim();
+      const cost = Number.parseInt(el.querySelector<HTMLInputElement>('#m-rw-cost')!.value.trim(), 10);
+      const stockRaw = el.querySelector<HTMLInputElement>('#m-rw-stock')!.value.trim();
+      const stock = stockRaw === '' ? null : Number.parseInt(stockRaw, 10);
+      if (!title) return toast({ title: 'Enter a reward title', tone: 'danger' });
+      if (!Number.isFinite(cost) || cost <= 0) return toast({ title: 'Cost must be a positive number', tone: 'danger' });
+      if (stock !== null && (!Number.isFinite(stock) || stock < 0)) return toast({ title: 'Stock must be zero or more', tone: 'danger' });
+      try {
+        await api.post('/admin/rewards', { title, cost, stock });
+        close();
+        toast({ title: 'Reward published', tone: 'success' });
+      } catch (err) {
+        close();
+        errToast(err);
+      }
+    }),
+  );
 }

@@ -2,7 +2,7 @@ import './styles.css';
 import { initData, ready } from './tg.js';
 import { closeOverlays } from './ui.js';
 import { renderUser, stopQrTimer } from './user.js';
-import { renderAdmin } from './admin.js';
+import { renderAdmin, teardownAdmin } from './admin.js';
 import { renderDocs } from './docs.js';
 
 ready();
@@ -29,6 +29,7 @@ function renderOutsideTelegram(el: HTMLElement): void {
 async function route(): Promise<void> {
   try {
     closeOverlays(); // drop any open sheet/dialog/toast from the previous screen
+    teardownAdmin(); // hide the admin BackButton; renderAdmin re-wires it if needed
     const path = location.pathname;
     // Public docs: viewable without Telegram (renderDocs degrades to the
     // customer guide when /me returns 401).
