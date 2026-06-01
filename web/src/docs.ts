@@ -11,6 +11,9 @@ interface Merchant {
   role: string;
 }
 
+// "You are here" badge appended to the section that matches the caller's role.
+const youTag = '<span class="role-tag">You</span>';
+
 const intro = `
   <div class="card">
     <h2>MCTL Rewards — guide</h2>
@@ -18,9 +21,9 @@ const intro = `
     on rewards. One balance works everywhere in the community.</p>
   </div>`;
 
-const customer = `
+const customer = (you: boolean): string => `
   <div class="card">
-    <h3>For customers</h3>
+    <h3>For customers${you ? youTag : ''}</h3>
     <ol>
       <li>Open the bot and tap <b>Open</b> to launch the app.</li>
       <li>Show your personal <b>QR code</b> to the staff. It rotates every ~30 seconds and is
@@ -32,37 +35,45 @@ const customer = `
     </ol>
   </div>`;
 
-const staff = `
+const staff = (you: boolean): string => `
   <div class="card">
-    <h3>For staff (scanners)</h3>
+    <h3>For staff (scanners)${you ? youTag : ''}</h3>
+    <p class="muted">Open the bot, tap <b>Open</b>, then go to <b>Admin</b>. Staff land on a tabbed
+    panel that shows only the merchant(s) you work for.</p>
     <ol>
-      <li>Open the app and go to <b>Admin panel</b>. You only see the merchant you work for.</li>
-      <li>Pick the <b>merchant</b> (preselected if you have one) and tap <b>Scan QR</b>.</li>
-      <li>Scan the customer's QR and choose the <b>accrual rule</b> (e.g. Visit, Purchase).</li>
-      <li>Points are awarded instantly. Daily limits per rule prevent farming.</li>
-      <li>Under <b>Redemption requests</b> you can <b>Fulfill</b> or <b>Cancel</b> a redemption
-          (cancel returns the points).</li>
+      <li>On the <b>Scan</b> tab, pick your merchant (preselected if you have one).</li>
+      <li>Tap <b>Scan to award</b>, scan the customer's QR, then tap the <b>accrual rule</b>
+          (Visit, Purchase, …). Points are credited instantly; daily limits per merchant prevent farming.</li>
+      <li>To hand over a reward, tap <b>Scan redemption</b> and scan the redemption QR the customer shows.</li>
+      <li>The <b>Requests</b> tab lists redemptions you can <b>Fulfill</b> or <b>Cancel</b>
+          (cancel returns the points and restocks).</li>
     </ol>
   </div>`;
 
-const owner = `
+const owner = (you: boolean): string => `
   <div class="card">
-    <h3>For cafe owners (merchant admins)</h3>
+    <h3>For cafe owners (merchant admins)${you ? youTag : ''}</h3>
+    <p class="muted">Beyond <b>Scan</b> and <b>Requests</b>, you get two more tabs for your place:</p>
     <ol>
-      <li>In the <b>Admin panel</b> open the <b>Staff</b> section for your place.</li>
-      <li>Ask your employee to open the bot and copy their <b>ID</b> from their profile screen
-          (the <code>ID: …</code> line with a Copy button).</li>
-      <li>Enter that <b>telegram_id</b> and tap <b>Add</b> to make them a scanner. Remove them
-          anytime.</li>
-      <li>One employee can belong to <b>only one</b> merchant.</li>
+      <li><b>Staff</b> — add a <b>scanner</b> or <b>admin</b> by Telegram ID (ask them to copy the
+          <code>ID: …</code> line from their profile screen), or remove one. One employee belongs to
+          <b>only one</b> merchant.</li>
+      <li><b>Rules</b> — create and manage <b>your own accrual rules</b> (fixed points, with a
+          required daily limit). You only ever see and edit your own merchant's rules. Rules are
+          <b>deactivated</b>, never deleted, so daily-limit history is preserved.</li>
     </ol>
   </div>`;
 
-const superAdmin = `
+const superAdmin = (you: boolean): string => `
   <div class="card">
-    <h3>For the platform owner (super-admin)</h3>
-    <p>Create merchants, accrual rules and the rewards catalog, and assign each merchant's admin.
-    Super-admins can manage staff for any merchant.</p>
+    <h3>For the platform owner (super-admin)${you ? youTag : ''}</h3>
+    <p class="muted">You can act for <b>any</b> merchant and get an extra <b>Program</b> tab:</p>
+    <ol>
+      <li><b>Create merchants</b> and assign each one's admin; add staff to any merchant.</li>
+      <li>Create <b>global accrual rules</b> (apply at every merchant) and review every merchant's
+          rules together in one list.</li>
+      <li>Publish the <b>rewards</b> catalog — points cost and optional stock.</li>
+    </ol>
   </div>`;
 
 const publicNote = `
@@ -97,10 +108,12 @@ export async function renderDocs(root: HTMLElement): Promise<void> {
     authed = false; // public browser view
   }
 
-  const out = [intro, customer];
-  if (isStaff) out.push(staff);
-  if (isAdmin) out.push(owner);
-  if (isSuper) out.push(superAdmin);
+  // Mark the section matching the caller's most-specific role with a "You" badge.
+  const you = isSuper ? 'super' : isAdmin ? 'owner' : isStaff ? 'staff' : 'customer';
+  const out = [intro, customer(you === 'customer')];
+  if (isStaff) out.push(staff(you === 'staff'));
+  if (isAdmin) out.push(owner(you === 'owner'));
+  if (isSuper) out.push(superAdmin(you === 'super'));
   if (!authed) out.push(publicNote);
   out.push(backLink);
   root.innerHTML = out.join('');
