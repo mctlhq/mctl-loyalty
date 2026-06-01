@@ -20,9 +20,12 @@ export function esc(s: string): string {
  */
 export function submitOnce(btn: HTMLButtonElement, fn: () => Promise<void>): void {
   if (btn.disabled) return;
+  const label = btn.textContent;
   btn.disabled = true;
+  btn.textContent = 'Working…'; // visible progress on slow connections
   void fn().finally(() => {
     btn.disabled = false;
+    if (label !== null) btn.textContent = label; // no-op if the sheet already closed
   });
 }
 
@@ -185,6 +188,11 @@ function mountScrim(centered: boolean): HTMLElement {
 function unmount(scrim: HTMLElement): void {
   scrim.remove();
   scrims = scrims.filter((s) => s !== scrim);
+}
+
+/** Whether any sheet/dialog overlay is currently open. */
+export function hasOverlay(): boolean {
+  return scrims.length > 0;
 }
 
 /** Dismiss every open overlay (used when navigating away from a screen). */

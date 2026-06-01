@@ -19,6 +19,7 @@ import {
   openDialog,
   toast,
   closeOverlays,
+  hasOverlay,
   submitOnce,
 } from './ui.js';
 
@@ -149,7 +150,12 @@ export async function renderAdmin(root: HTMLElement): Promise<void> {
   // Telegram has no browser chrome, so wire the native BackButton back to the
   // member profile (no-op outside Telegram, where the in-shell links suffice).
   teardownAdmin();
-  backCleanup = showBackButton(() => navigateTo('/app'));
+  // Back closes an open sheet/dialog first (what Telegram users expect), and only
+  // leaves for the member profile once nothing is overlaid.
+  backCleanup = showBackButton(() => {
+    if (hasOverlay()) closeOverlays();
+    else navigateTo('/app');
+  });
   // Deep-link preselect: focus a merchant opened via a Direct Link, once per
   // session, so manual switches stick afterwards.
   const startId = startMerchantId();
