@@ -987,6 +987,216 @@ section {
   color: var(--mck-sub);
 }
 
+/* tabbed admin shell mockup (role-based nav: scan/requests/staff/rules/program) */
+.mck-app-tabs {
+  display: flex;
+  flex-direction: column;
+}
+
+.mck-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mck-seclabel {
+  margin: 2px 18px 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mck-sub);
+}
+
+.mck-seclabel-mt {
+  margin-top: 20px;
+}
+
+.mck-selrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--mck-card);
+  border-radius: 12px;
+  padding: 13px 14px;
+  margin: 0 14px 14px;
+}
+
+.mck-selrow-txt {
+  flex: 1;
+  min-width: 0;
+}
+
+.mck-selrow-txt b {
+  font-size: 15px;
+}
+
+.mck-selrow-txt span {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--mck-sub);
+}
+
+.mck-tag {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--mck-accent);
+  background: rgba(59, 146, 238, 0.13);
+  border-radius: 999px;
+  padding: 4px 11px;
+}
+
+.mck-scanhero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 30px 22px;
+}
+
+.mck-scan-ico {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--mck-accent);
+  margin-bottom: 14px;
+}
+
+.mck-scan-title {
+  font-weight: 700;
+  font-size: 17px;
+}
+
+.mck-scan-sub {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--mck-sub);
+}
+
+.mck-mainbar {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--mck-line);
+  padding: 12px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mck-scanlink {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--mck-accent);
+}
+
+.mck-actionrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--mck-card);
+  border-radius: 13px;
+  padding: 13px 14px;
+  margin: 0 14px 10px;
+}
+
+.mck-act-ico {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: rgba(59, 146, 238, 0.13);
+  color: var(--mck-accent);
+}
+
+.mck-act-txt {
+  flex: 1;
+  min-width: 0;
+}
+
+.mck-act-txt b {
+  font-size: 14px;
+}
+
+.mck-act-txt span {
+  display: block;
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--mck-sub);
+}
+
+.mck-act-plus {
+  flex: 0 0 auto;
+  font-size: 20px;
+  font-weight: 300;
+  color: var(--mck-sub);
+}
+
+.mck-rulerow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 4px;
+  margin: 0 18px;
+  border-bottom: 1px solid var(--mck-line);
+}
+
+.mck-rule-txt {
+  flex: 1;
+  min-width: 0;
+}
+
+.mck-rule-txt b {
+  font-size: 14.5px;
+}
+
+.mck-rule-txt span {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--mck-sub);
+}
+
+.mck-ghost {
+  flex: 0 0 auto;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mck-ink);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 5px 13px;
+}
+
+.mck-tabbar {
+  flex: 0 0 auto;
+  display: flex;
+  border-top: 1px solid var(--mck-line);
+  background: var(--mck-bg);
+  padding: 8px 2px 13px;
+}
+
+.mck-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 9.5px;
+  color: var(--mck-sub);
+}
+
+.mck-tab.active {
+  color: var(--mck-accent);
+}
+
 /* ---- responsive ---- */
 @media (max-width: 860px) {
   .wrap,
