@@ -81,7 +81,7 @@ jobs:
           files=$(gh pr view "$PR" --repo ${{ github.repository }} \
             --json files --jq '[.files[].path] | join("\n")')
           lines=$(gh pr diff "$PR" --repo ${{ github.repository }} 2>/dev/null \
-            | grep -c '^[+-][^+-]' || echo 0)
+            | grep -c '^[+-][^+-]')
           score=1
           while IFS= read -r f; do
             # Money/auth-sensitive backend → top tier (ledger, routes, schema, auth).
