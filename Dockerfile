@@ -3,7 +3,7 @@
 # landing+web+api together for local dev; in Docker each stage builds its own
 # part in isolation, so this stage uses build:api (landing/ and web/ are not
 # copied into this stage, so a full `npm run build` would fail on `cd landing`).
-FROM node:22.11-alpine3.20 AS build-api
+FROM node:24.1-alpine3.20 AS build-api
 WORKDIR /app
 COPY package*.json tsconfig.json ./
 RUN npm ci
@@ -13,7 +13,7 @@ RUN npm run build:api
 # ---- build marketing landing (Astro -> /app/public) ----
 # Astro's outDir is ../public, so this stage writes /app/public (the landing
 # root: index.html, /privacy, /terms, assets under /_astro).
-FROM node:22.11-alpine3.20 AS build-landing
+FROM node:24.1-alpine3.20 AS build-landing
 WORKDIR /app/landing
 COPY landing/package*.json ./
 RUN npm ci
@@ -24,7 +24,7 @@ RUN npm run build
 # vite outDir is ../public/_miniapp, resolved relative to the project root
 # (/app/web), so this stage writes the SPA to /app/public/_miniapp (one level
 # up from /app/web), with assets under /_miniapp/assets.
-FROM node:22.11-alpine3.20 AS build-web
+FROM node:24.1-alpine3.20 AS build-web
 WORKDIR /app/web
 COPY web/package*.json ./
 RUN npm ci
@@ -32,7 +32,7 @@ COPY web/ ./
 RUN npm run build
 
 # ---- runtime ----
-FROM node:22.11-alpine3.20
+FROM node:24.1-alpine3.20
 RUN apk add --no-cache tini
 ENV NODE_ENV=production
 ENV PORT=8080
