@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
-    "@types/node": "^22.10.0",
+    "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
     "puppeteer-core": "^25.16.0",
     "typescript": "^7.0.2"
