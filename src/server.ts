@@ -32,7 +32,14 @@ async function main(): Promise<void> {
     // eslint-disable-next-line no-console
     console.warn('[startup] DATABASE_URL not set — skipping migrations (dev only)');
   }
-  app.listen(config.port, () => {
+  app.listen(config.port, (err) => {
+    // Express 5 hands listen errors (e.g. EADDRINUSE) to this callback instead of
+    // throwing them; without this the process would log "listening" and carry on.
+    if (err) {
+      // eslint-disable-next-line no-console
+      console.error('[startup] fatal', err);
+      process.exit(1);
+    }
     // eslint-disable-next-line no-console
     console.log(`[startup] mctl-loyalty ${config.serviceVersion} listening on :${config.port} (env=${config.appEnv})`);
   });

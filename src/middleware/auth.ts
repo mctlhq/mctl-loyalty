@@ -12,7 +12,7 @@ export interface AuthContext {
 
 const CTX = Symbol('authCtx');
 
-export function getCtx(req: Request): AuthContext {
+export function getCtx(req: Request<unknown>): AuthContext {
   const ctx = (req as unknown as Record<symbol, AuthContext>)[CTX];
   if (!ctx) throw new Error('auth context missing — route not behind requireAuth');
   return ctx;
@@ -92,10 +92,11 @@ export function requireSuperAdmin() {
 /**
  * Gate a route on the caller being staff of merchant `:mid` with one of `roles`.
  * Super-admins always pass. Resolves and attaches nothing extra; routes read
- * `req.params.mid`.
+ * `req.params.mid`. Generic in the route's params, so the path (which must
+ * declare `:mid`) still types `req.params` for the handlers after this gate.
  */
 export function requireMember(roles: Array<'admin' | 'scanner'>) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  return async <P extends { mid: string }>(req: Request<P>, res: Response, next: NextFunction): Promise<void> => {
     const ctx = getCtx(req);
     const mid = Number.parseInt(req.params.mid ?? '', 10);
     if (!Number.isFinite(mid)) {

@@ -66,12 +66,16 @@ export function createApp({ publicDir = PUBLIC_DIR }: { publicDir?: string } = {
   // the SPA's index.html. `/docs` is the single docs route (it was also /help —
   // collapsed). The root `/` is intentionally NOT here — it is the Astro landing
   // served by express.static above.
-  app.get(['/app', '/app/*', '/admin', '/admin/*', '/docs', '/docs/*'], (_req, res) => {
-    res.sendFile(resolve(publicDir, '_miniapp', 'index.html'));
+  // `{/*splat}` matches the bare path, a trailing slash and anything below it
+  // (path-to-regexp 8 rejects a bare `*`). Files are sent relative to `root`
+  // because send 1.x ignores dotfiles in every segment of an absolute path, which
+  // would 404 a checkout under a dot-directory such as ~/.worktrees.
+  app.get(['/app{/*splat}', '/admin{/*splat}', '/docs{/*splat}'], (_req, res) => {
+    res.sendFile('_miniapp/index.html', { root: publicDir });
   });
 
   // legacy /help collapsed into /docs (0.7.0); redirect permanently so old bookmarks still work.
-  app.get(['/help', '/help/*'], (_req, res) => {
+  app.get('/help{/*splat}', (_req, res) => {
     res.redirect(301, '/docs');
   });
 
@@ -79,7 +83,7 @@ export function createApp({ publicDir = PUBLIC_DIR }: { publicDir?: string } = {
   // Unknown paths fall through to the landing's 404 page (or home if absent).
   app.use((req: Request, res: Response, next: NextFunction) => {
     if (req.method !== 'GET') return next();
-    res.status(404).sendFile(resolve(publicDir, '404.html'), (err) => {
+    res.status(404).sendFile('404.html', { root: publicDir }, (err) => {
       if (err && !res.headersSent) res.redirect('/');
     });
   });
