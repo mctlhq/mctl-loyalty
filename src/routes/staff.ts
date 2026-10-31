@@ -18,8 +18,11 @@ import { sendLedgerError } from '../middleware/errors.js';
 
 export const staffRouter = Router();
 
+// The gates below are generic in the route's params so that the path, not the
+// gate, types `req.params` for the handler that follows.
+
 // Gate: caller is staff of at least one merchant, or a super-admin.
-async function requireAnyStaff(req: Request, res: Response, next: NextFunction): Promise<void> {
+async function requireAnyStaff<P>(req: Request<P>, res: Response, next: NextFunction): Promise<void> {
   try {
     const ctx = getCtx(req);
     if (ctx.superAdmin) return next();
@@ -39,7 +42,7 @@ async function requireAnyStaff(req: Request, res: Response, next: NextFunction):
 
 // Gate: caller is a super-admin OR a merchant-admin of at least one merchant.
 // Scanners do NOT pass — used for the manual (no-scan) redemption overrides.
-async function requireAnyAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+async function requireAnyAdmin<P>(req: Request<P>, res: Response, next: NextFunction): Promise<void> {
   try {
     const ctx = getCtx(req);
     if (ctx.superAdmin) return next();
