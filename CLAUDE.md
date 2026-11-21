@@ -108,3 +108,11 @@ DATABASE_URL=postgres://... AUTH_DEV_BYPASS=true npm start
 - `TRUST_PROXY_HOPS` (default 1) — proxies in front of the app, for Express `trust proxy`.
 - `RATE_LIMIT_WINDOW_MS` (60000), `RATE_LIMIT_IP_MAX` (300), `RATE_LIMIT_USER_MAX` (120) —
   `/api` rate limits (in-memory, per process; single-replica assumption).
+- `TRUST_CF_CONNECTING_IP` (default false; only the literal `true` enables) — key the IP rate
+  limits on the `CF-Connecting-IP` header (single valid IP, via `ipKeyGenerator`), else `req.ip`.
+  Why: the host sits behind Cloudflare and Traefik's websecure `forwardedHeaders.trustedIPs` is only
+  `127.0.0.1/32,10.0.0.0/8`, so Traefik rewrites `X-Forwarded-For` to the Cloudflare edge address and
+  `req.ip` is the edge node for every user, whatever `TRUST_PROXY_HOPS` is. The websecure entrypoint
+  applies the `cloudflare-origin` ipAllowList (Cloudflare ranges only), so origin traffic can only
+  arrive via Cloudflare and the header is trustworthy there. Never enable it where traffic can bypass
+  Cloudflare (local dev, direct in-cluster calls): the header is client-controlled there.
