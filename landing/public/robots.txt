@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /_miniapp/
+
+Sitemap: https://rewards.mctl.ai/sitemap.xml
