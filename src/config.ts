@@ -42,6 +42,17 @@ export const config = {
   // initData freshness window in seconds (reject stale Mini App auth payloads).
   initDataMaxAgeSeconds: intEnv('INITDATA_MAX_AGE_SECONDS', 86400),
 
+  // Number of reverse proxies in front of the app, passed to Express
+  // `trust proxy` so req.ip is the real client. Defaults to 1 (the ingress).
+  trustProxyHops: intEnv('TRUST_PROXY_HOPS', 1),
+
+  // API rate limiting (in-memory, per process). Window in ms; budgets are
+  // requests per window. The per-IP budget is larger because several users can
+  // share one NAT address; the per-user budget applies once authenticated.
+  rateLimitWindowMs: intEnv('RATE_LIMIT_WINDOW_MS', 60_000),
+  rateLimitIpMax: intEnv('RATE_LIMIT_IP_MAX', 300),
+  rateLimitUserMax: intEnv('RATE_LIMIT_USER_MAX', 120),
+
   // When true (local dev only), accept an X-Debug-User-Id header instead of real
   // Telegram initData. Hard-disabled when APP_ENV=production so an accidental
   // env flag can never open an auth bypass in prod.

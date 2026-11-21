@@ -5,6 +5,7 @@ import type { Express, NextFunction, Request, Response } from 'express';
 import { config } from './config.js';
 import { pool } from './db/pool.js';
 import { requireAuth } from './middleware/auth.js';
+import { createApiLimiters, type RateLimitOptions } from './middleware/rateLimit.js';
 import { adminRouter } from './routes/admin.js';
 import { staffRouter } from './routes/staff.js';
 import { userRouter } from './routes/user.js';
@@ -16,8 +17,14 @@ const PUBLIC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'publi
  * ephemeral port over a fixture public dir. server.ts owns startup (migrations,
  * sweeper, listen).
  */
-export function createApp({ publicDir = PUBLIC_DIR }: { publicDir?: string } = {}): Express {
+export function createApp({
+  publicDir = PUBLIC_DIR,
+  rateLimit,
+}: { publicDir?: string; rateLimit?: Partial<RateLimitOptions> } = {}): Express {
   const app = express();
+  // Behind the ingress req.ip is the proxy unless Express is told how many
+  // hops to trust; the rate limiter keys on it.
+  app.set('trust proxy', config.trustProxyHops);
   app.disable('x-powered-by');
   app.use(express.json({ limit: '64kb' }));
 
@@ -46,8 +53,14 @@ export function createApp({ publicDir = PUBLIC_DIR }: { publicDir?: string } = {
   });
 
   // ---- API (all routes require Telegram auth) ----
+  // Rate limiting covers /api only: probes, metrics and static assets stay
+  // unlimited. The IP limiter runs first (guards the unauthenticated path), the
+  // per-user limiter runs once the user id is known.
+  const { ipLimiter, userLimiter } = createApiLimiters(rateLimit);
   const api = express.Router();
+  api.use(ipLimiter);
   api.use(requireAuth());
+  api.use(userLimiter);
   api.use('/', userRouter);
   api.use('/', staffRouter);
   api.use('/admin', adminRouter);

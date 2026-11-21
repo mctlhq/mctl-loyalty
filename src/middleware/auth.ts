@@ -12,6 +12,16 @@ export interface AuthContext {
 
 const CTX = Symbol('authCtx');
 
+/** Attach the auth context to a request (used by requireAuth; exported for tests). */
+export function setCtx(req: Request<unknown>, ctx: AuthContext): void {
+  (req as unknown as Record<symbol, AuthContext>)[CTX] = ctx;
+}
+
+/** The auth context if requireAuth has run, else undefined. */
+export function peekCtx(req: Request<unknown>): AuthContext | undefined {
+  return (req as unknown as Record<symbol, AuthContext | undefined>)[CTX];
+}
+
 export function getCtx(req: Request<unknown>): AuthContext {
   const ctx = (req as unknown as Record<symbol, AuthContext>)[CTX];
   if (!ctx) throw new Error('auth context missing — route not behind requireAuth');
@@ -66,12 +76,12 @@ export function requireAuth() {
 
     try {
       const userId = await resolveUser(telegramId, username);
-      (req as unknown as Record<symbol, AuthContext>)[CTX] = {
+      setCtx(req, {
         userId,
         telegramId,
         username,
         superAdmin: isSuperAdmin(telegramId),
-      };
+      });
       next();
     } catch (err) {
       next(err);

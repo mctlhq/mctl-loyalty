@@ -105,3 +105,6 @@ DATABASE_URL=postgres://... AUTH_DEV_BYPASS=true npm start
 - `SUPER_ADMIN_TELEGRAM_IDS` — comma-separated Telegram ids of platform super-admins.
 - `QR_TTL_SECONDS` (default 60), `REDEMPTION_TTL_SECONDS` (default 900),
   `CLAIM_TOKEN_TTL_SECONDS` (default 300), `PORT` (default 8080), `AUTH_DEV_BYPASS` (dev only).
+- `TRUST_PROXY_HOPS` (default 1) — proxies in front of the app, for Express `trust proxy`.
+- `RATE_LIMIT_WINDOW_MS` (60000), `RATE_LIMIT_IP_MAX` (300), `RATE_LIMIT_USER_MAX` (120) —
+  `/api` rate limits (in-memory, per process; single-replica assumption).
