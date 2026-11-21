@@ -53,6 +53,13 @@ export const config = {
   rateLimitIpMax: intEnv('RATE_LIMIT_IP_MAX', 300),
   rateLimitUserMax: intEnv('RATE_LIMIT_USER_MAX', 120),
 
+  // Key the rate limiters on the CF-Connecting-IP header instead of req.ip.
+  // Only the literal "true" enables it. Safe only when every request reaches
+  // the app through Cloudflare (Traefik's cloudflare-origin ipAllowList on the
+  // websecure entrypoint guarantees that); anywhere else the header is
+  // client-controlled and would let a caller rotate buckets.
+  trustCfConnectingIp: process.env.TRUST_CF_CONNECTING_IP === 'true',
+
   // When true (local dev only), accept an X-Debug-User-Id header instead of real
   // Telegram initData. Hard-disabled when APP_ENV=production so an accidental
   // env flag can never open an auth bypass in prod.
